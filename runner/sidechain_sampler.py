@@ -26,21 +26,30 @@ class SidechainSampler(object):
         self.use_gt_masks = use_gt_masks
         self.seed = load_seed(self.config.seed)
         self.device = load_device()
+
+        if not hasattr(self.config, 'sample'):
+            from ml_collections import ConfigDict
+            self.config.sample = ConfigDict({'n_samples': 1, 'num_steps': 10, 'coeff': 5.0})
+            
         self.train_loader, self.test_loader, _, _ = get_dataloader(self.config, ddp=ddp, sample=True)
         self.idealizer = Idealizer(use_native_bb_coords=True)
 
-    def sample(self, ts, name='test', save_traj=False, inpaint=''):
-        self.config.exp_name = ts
-        self.ckpt = f'{ts}'
-
-        print(f'{self.ckpt}')
-        ckpt_dict = torch.load(self.config.ckpt, weights_only=False)
+    def sample(self, sample_name='test', save_traj=False, inpaint=''):
+        ckpt_dict = torch.load(self.config.ckpt, map_location='cpu', weights_only=False)
         train_cfg = ckpt_dict['config']
+
         self.log_folder_name, self.log_dir, self.ckpt_dir = set_log(train_cfg)
-        self.model = CNF(EquiformerV2(**train_cfg.model), train_cfg, coeff=self.config.sample.coeff,
-                         stepsize=self.config.sample.num_steps, mode=self.config.mode).cuda()
-        # self.model = torch.compile(self.model)
+        
+        self.model = CNF(
+            EquiformerV2(**train_cfg.model), 
+            train_cfg, 
+            coeff=self.config.sample.coeff,
+            stepsize=self.config.sample.num_steps, 
+            mode=self.config.mode
+        ).cuda()
+        
         print(f'Number of parameters: {count_parameters(self.model)}')
+
         self.ema = load_ema(self.model, decay=train_cfg.train.ema)
         self.model, self.ema = load_checkpoint(self.model, self.ema, ckpt_dict)
         self.model.eval()
@@ -56,7 +65,7 @@ class SidechainSampler(object):
         logger = Logger(str(os.path.join(self.log_dir, f'{self.ckpt}.log')), mode='a')
         logger.log(f'{self.ckpt}', verbose=False)
 
-        save_path = Path(f'./samples/{name}')
+        save_path = Path(f'./samples/{sample_name}')
         save_path.mkdir(exist_ok=True, parents=True)
 
         # sample_path = save_path.joinpath(ts)
@@ -216,5 +225,3 @@ if __name__ == '__main__':
     sampler = SidechainSampler(config, args.use_gt_masks)
     sampler.sample(time.strftime('%b%d-%H:%M:%S', time.gmtime()), name=args.name, save_traj=args.save_traj, inpaint=args.inpaint)
     print(f'Inference took a total of {time.time() - start_time} seconds')
-
-    # python sampler_pdb.py base CPSea_PDB

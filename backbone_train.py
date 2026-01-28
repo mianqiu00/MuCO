@@ -9,5 +9,5 @@ def run(conf: DictConfig) -> None:
 
 if __name__ == "__main__":
     seed_everything()
-    conf = OmegaConf.load("config/backbone_train.yaml")
+    conf = OmegaConf.load("config/backbone.yaml")
     run(conf)
