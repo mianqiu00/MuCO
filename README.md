@@ -1,104 +1,128 @@
 # MuCO: Generative Peptide Cyclization Empowered by Multi-stage Conformation Optimization
 
-MuCO is a deep learning framework for generating 3D conformations of cyclic peptides through a multi-stage pipeline. The model decomposes the complex task of cyclic peptide structure prediction into three sequential stages: backbone generation, sidechain packing, and force field relaxation with cyclization validation.
+> **Accepted by ICML 2026**
+
+MuCO is a generative framework for cyclic peptide conformation modeling via **multi-stage conformation optimization**. Given a linear peptide, MuCO decomposes peptide cyclization into three coordinated stages: topology-aware backbone generation, generative side-chain packing, and physics-aware all-atom refinement.
+
+This repository contains the official implementation of **MuCO**, accompanying our ICML 2026 paper on generative peptide cyclization.
 
 ## Overview
 
-Cyclic peptides are promising therapeutic candidates due to their enhanced stability, bioavailability, and target specificity. However, predicting their 3D structures remains challenging due to the conformational constraints imposed by cyclization. MuCO addresses this challenge through a hierarchical generation approach:
+Cyclic peptides are important molecular scaffolds for therapeutic discovery because they often exhibit improved stability, proteolytic resistance, membrane permeability, and target-binding specificity relative to linear peptides. Their conformational landscape is, however, highly constrained and multi-modal, which makes direct deterministic prediction inadequate for capturing diverse low-energy ring-closed structures.
 
-1. **Stage 1: Backbone Generation** - Generates the protein backbone (N, CA, C, O atoms) using SE(3) flow matching
-2. **Stage 2: Sidechain Generation** - Predicts sidechain conformations conditioned on the generated backbone using equivariant neural networks
-3. **Stage 3: Relaxation & Validation** - Optimizes the full-atom structure using molecular mechanics force fields and validates cyclization
+MuCO addresses this challenge by factorizing cyclic peptide generation into a coarse-to-fine pipeline:
+
+1. **Topology-Aware Backbone Generation** with sequence-conditioned SE(3) flow matching.
+2. **Generative Side-chain Packing** with equivariant conditional flow modeling.
+3. **Physics-Aware Optimization** with force-field-based refinement and cyclization validation.
+
+This decomposition enables efficient parallel exploration of candidate conformations while preserving physical plausibility and structural diversity.
+
+## News
+
+- **[2026-05] MuCO has been accepted to ICML 2026.**
+- **[2026-01] arXiv preprint prepared.** Replace the placeholder arXiv identifier below once the public preprint is available.
+
+## Paper
+
+**MuCO: Generative Peptide Cyclization Empowered by Multi-stage Conformation Optimization**  
+Yitian Wang, Fanmeng Wang, Angxiao Yue, Wentao Guo, Yaning Cui, Hongteng Xu
+
+- **Conference:** International Conference on Machine Learning (ICML), 2026
+- **Preprint:** `https://arxiv.org/abs/2602.11189`
+
+## Abstract
+
+Modeling peptide cyclization is critical for the virtual screening of candidate peptides with desirable physical and pharmaceutical properties. This task is challenging because cyclic peptides often exhibit diverse ring-shaped conformations that are not well captured by deterministic prediction models derived from linear peptide folding. MuCO models the distribution of cyclic peptide conformations conditioned on the corresponding linear peptide through a three-stage pipeline: topology-aware backbone design, generative side-chain packing, and physics-aware all-atom optimization. This coarse-to-fine formulation supports efficient parallel sampling, rapid exploration of diverse low-energy conformations, and improved physical realism. Experiments on the large-scale CPSea dataset show that MuCO outperforms strong baselines in physical stability, structural diversity, secondary-structure recovery, and computational efficiency.
+
+## Framework Figure
+
+
+![MuCO overview](assets/figures/figure1_overview.png)
+
+*Figure 1. Illustration of the 3-stage MuCO scheme: topology-aware backbone generation, generative side-chain packing, and physics-aware optimization.*
+
+![MuCO framework](assets/figures/figure2_framework.png)
+
+*Figure 2. Framework overview of MuCO with decoupled backbone generation, side-chain packing, and energy-guided refinement.*
+
+## Key Highlights
+
+- **Multi-stage generation:** decouples cyclic peptide modeling into backbone generation, side-chain packing, and physics-guided refinement.
+- **Improved physical stability:** achieves substantially lower potential energy than deterministic folding baselines.
+- **Higher conformational diversity:** alleviates mode collapse and better recovers cyclization-mode and secondary-structure distributions.
+- **Efficient hierarchical sampling:** supports parallel `K x M` exploration over backbone and side-chain states.
+- **Practical cyclization support:** includes head-to-tail, disulfide, and Lys-Asp/Glu isopeptide cyclization modes.
+
+## Main Results
+
+On the curated CPSea benchmarks, MuCO demonstrates strong empirical performance in:
+
+- **Physical stability** measured by CHARMM36 potential energy.
+- **Structural diversity** measured by entropy over conformational clusters and cyclization modes.
+- **Secondary-structure recovery** relative to reference cyclic conformations.
+- **Inference efficiency** through parallel hierarchical sampling.
+
+Representative observations reported in the paper include:
+
+- MuCO achieves the **lowest mean potential energy** among compared methods in the main benchmark.
+- MuCO improves diversity relative to AF2-based cyclic peptide baselines that exhibit severe mode collapse.
+- MuCO reaches **41 ms amortized latency per sample** under parallel sampling, compared with multi-second latency for folding-based baselines.
+
+## Repository Structure
+
+```text
+MuCO-ICML2026/
+├── backbone_train.py
+├── backbone_sample.py
+├── sidechain_train.py
+├── sidechain_sample.py
+├── muco_infer.py
+├── config/
+├── data/
+├── model/
+├── openfold/
+├── relaxer/
+├── runner/
+├── saved_model/
+├── utils/
+├── assets/
+│   └── figures/
+├── environment.yml
+└── README.md
+```
 
 ## Installation
 
 ### Prerequisites
 
 - Python 3.9+
-- CUDA 11.x or later (for GPU acceleration)
-- Conda (recommended)
+- CUDA 11.x or later for GPU acceleration
+- Conda recommended for environment management
 
-### Setup Environment
+### Environment Setup
 
 ```bash
-# Create conda environment
 conda env create -f environment.yml
 conda activate muco
 
-# Install additional dependencies
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 pip install lightning omegaconf einops biopython
-pip install fair-esm  # For ESM2 sequence encoder
+pip install fair-esm
 ```
 
-## Project Structure
-
-```
-MuCO/
-├── backbone_train.py          # Entry point for backbone model training
-├── backbone_sample.py         # Entry point for backbone sampling/inference
-├── sidechain_train.py         # Entry point for sidechain model training
-├── sidechain_sample.py        # Entry point for sidechain sampling/inference
-├── config/
-│   ├── backbone_train.yaml    # Backbone training configuration
-│   ├── sidechain_train.yaml   # Sidechain training configuration
-│   └── sidechain_sample.yaml  # Sidechain sampling configuration
-├── model/
-│   ├── backbone/              # Backbone generation model (FoldFlow2-based)
-│   │   ├── flow_model.py      # Main model architecture
-│   │   ├── structure_network.py  # IPA-based encoder/decoder
-│   │   ├── trunk.py           # Triangular attention transformer
-│   │   ├── flow/              # SE(3) flow matching modules
-│   │   └── components/        # Network components (ESM2, IPA, etc.)
-│   └── sidechain/             # Sidechain generation model
-│       ├── models/
-│       │   ├── cnf.py         # Continuous Normalizing Flow wrapper
-│       │   └── equiformer_v2/ # EquiformerV2 architecture
-│       └── utils/             # Training and evaluation utilities
-├── runner/
-│   ├── backbone_trainer.py    # Backbone training logic
-│   ├── backbone_sampler.py    # Backbone inference logic
-│   ├── sidechain_trainer.py   # Sidechain training logic
-│   └── sidechain_sampler.py   # Sidechain inference logic
-├── relaxer/                   # Force field relaxation module
-│   ├── auto.py                # Automatic cyclization mode detection
-│   ├── relax.py               # Batch relaxation pipeline
-│   ├── head_tail.py           # Head-to-tail cyclization
-│   ├── cys_to_cys.py          # Disulfide bond cyclization
-│   ├── k_to_de.py             # Isopeptide bond cyclization (Lys-Asp/Glu)
-│   ├── analysis_energy.py     # Energy analysis and visualization
-│   └── analysis_structure.py  # Structural analysis
-├── openfold/                  # OpenFold utilities
-├── data/
-│   ├── metadata.csv           # Dataset metadata
-│   └── pdb_reader.py          # PDB parsing utilities
-└── environment.yml            # Conda environment specification
-```
-
-## Pipeline
+## Method Pipeline
 
 ### Stage 1: Backbone Generation
 
-The backbone generation model is based on **FoldFlow2** architecture with SE(3) flow matching. It generates backbone atom coordinates (N, CA, C, O) conditioned on amino acid sequences.
+The backbone generator builds cyclic peptide backbones with sequence-conditioned **SE(3) flow matching**, using ESM2 representations and geometry-aware transformers.
 
-**Key Features:**
-- ESM2 (650M) sequence encoder for rich residue representations
-- Invariant Point Attention (IPA) for geometric reasoning
-- SE(3) flow matching for joint translation and rotation generation
-- Triangular self-attention for capturing pairwise residue interactions
-
-**Training:**
 ```bash
 python backbone_train.py
 ```
 
-Configuration is loaded from `config/backbone_train.yaml`. Key parameters:
-- `data.csv_path`: Path to training data metadata
-- `experiment.batch_size`: Training batch size
-- `experiment.num_epoch`: Number of training epochs
-- `experiment.num_gpus`: Number of GPUs for distributed training
+Sampling example:
 
-**Sampling:**
 ```bash
 python backbone_sample.py \
     --config_timestamp {timestamp} \
@@ -109,17 +133,10 @@ python backbone_sample.py \
     --split CPBind
 ```
 
-### Stage 2: Sidechain Generation
+### Stage 2: Side-chain Packing
 
-The sidechain model predicts torsion angles (chi angles) for all amino acid sidechains given the backbone structure. It uses **EquiformerV2** as the backbone network within a Continuous Normalizing Flow (CNF) framework.
+The side-chain module predicts torsional configurations conditioned on the generated backbone using **EquiformerV2** within a conditional normalizing-flow framework.
 
-**Key Features:**
-- EquiformerV2 with SO(2) equivariant attention for geometric feature learning
-- CNF-based generation for smooth and diverse sidechain conformations
-- Torsion angle representation on SO(2) manifold
-- Optional confidence model for sample quality estimation
-
-**Training:**
 ```bash
 python sidechain_train.py config/sidechain_train.yaml \
     --devices 4 \
@@ -127,120 +144,98 @@ python sidechain_train.py config/sidechain_train.yaml \
     --precision 32-true
 ```
 
-To resume training from a checkpoint:
+Resume training:
+
 ```bash
 python sidechain_train.py config/sidechain_train.yaml --resume
 ```
 
-**Sampling:**
+Sampling example:
+
 ```bash
 python sidechain_sample.py config/sidechain_sample.yaml output_name \
     --seed 42 \
     --save_traj False
 ```
 
-### Stage 3: Force Field Relaxation
+### Stage 3: Physics-Aware Optimization
 
-The relaxation stage uses OpenMM to perform energy minimization and validate successful cyclization. It automatically detects the cyclization mode based on terminal residue chemistry.
+The final stage applies OpenMM-based refinement to improve local geometry, reduce steric clashes, and validate chemically valid ring closure.
 
-**Supported Cyclization Modes:**
-- **Head-to-tail**: Standard backbone cyclization (N-terminal N to C-terminal C)
-- **Cys-to-Cys**: Disulfide bond formation (SG-SG)
-- **Isopeptide**: Lys-Asp/Glu sidechain cyclization (NZ to CG/CD)
+Supported cyclization modes:
 
-**Single Structure Relaxation:**
+- **Head-to-tail** cyclization
+- **Cys-to-Cys** disulfide cyclization
+- **Lys-Asp/Glu** isopeptide cyclization
+
+Single-structure relaxation:
+
 ```bash
-cd relaxer
-python auto.py input.pdb output.pdb
+python relaxer/auto.py input.pdb output.pdb
 ```
 
-**Batch Relaxation:**
+Batch relaxation:
+
 ```bash
-cd relaxer
-python relax.py
+python relaxer/relax.py
 ```
 
-Configure input/output paths and GPU settings in `relax.py`:
-```python
-INPUT_ROOT = "./unrelaxed"
-OUTPUT_ROOT = "./relaxed"
-GPU_IDS = [0, 1, 2, 3]
-WORKERS_PER_GPU = 4
+## Quick Start
+
+For a standard generation workflow, run the three stages sequentially:
+
+1. Generate cyclic peptide backbones.
+2. Pack side chains on sampled backbones.
+3. Refine generated conformations with the relaxation module.
+
+If you maintain a project-specific inference wrapper, start from `muco_infer.py` and the scripts under `runner/`.
+
+## Evaluation
+
+The paper evaluates MuCO using the following criteria:
+
+- **Success Rate:** percentage of conformations satisfying cyclization geometry constraints.
+- **Physical Stability:** mean potential energy computed with CHARMM36.
+- **Diversity:** entropy over cyclization modes and secondary-structure clusters.
+- **Secondary-Structure Recovery:** agreement with reference conformational distributions.
+
+Benchmarks are constructed on filtered subsets derived from **CPSea**, including `CP-Bind`, `CP-Trans`, `CP-Core`, and `CPSea-PDB`.
+
+## Citation
+
+If you find this repository useful, please cite our paper:
+
+```bibtex
+@inproceedings{wang2026muco,
+  title     = {MuCO: Generative Peptide Cyclization Empowered by Multi-stage Conformation Optimization},
+  author    = {Wang, Yitian and Wang, Fanmeng and Yue, Angxiao and Guo, Wentao and Cui, Yaning and Xu, Hongteng},
+  booktitle = {Proceedings of the International Conference on Machine Learning},
+  year      = {2026},
+  note      = {Accepted by ICML 2026},
+  url       = {https://arxiv.org/abs/2602.11189}
+}
 ```
 
-**Analysis:**
-```bash
-# Energy analysis and visualization
-python analysis_energy.py
+After the arXiv page is public, replace the placeholder URL with the official identifier.
 
-# Structural analysis
-python analysis_structure.py
-```
+## Contact
 
-Output includes:
-- Per-structure energy before/after relaxation
-- Cyclization success rate
-- Bond distance validation
-- Statistical comparisons across datasets
+For questions about the paper or repository, please contact:
 
-## Configuration
+- **Hongteng Xu**: `hongtengxu@ruc.edu.cn`
 
-### Backbone Training (`config/backbone_train.yaml`)
-
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `data.csv_path` | Path to dataset metadata CSV | - |
-| `data.filtering.max_len` | Maximum sequence length | 512 |
-| `experiment.batch_size` | Training batch size | 256 |
-| `experiment.num_epoch` | Number of training epochs | 100 |
-| `experiment.learning_rate` | Learning rate | 2e-4 |
-| `flow_matcher.ot_plan` | Use optimal transport pairing | False |
-| `model.esm2_model_key` | ESM2 model variant | esm2_650M |
-
-### Sidechain Training (`config/sidechain_train.yaml`)
-
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `model.hidden_dim` | Hidden dimension | 128 |
-| `model.num_layers` | Number of EquiformerV2 layers | 4 |
-| `training.batch_size` | Training batch size | 32 |
-| `training.lr` | Learning rate | 1e-4 |
-| `training.epochs` | Number of training epochs | 100 |
-
-## Data Format
-
-Training data should be organized as PDB files with metadata in a CSV file composed by data/pdb_reader.py
-
-## Evaluation Metrics
-
-### Backbone Quality
-- **RMSD**: Root Mean Square Deviation from reference structures
-- **Distance Matrix Error**: Pairwise Cα distance deviation
-
-### Sidechain Quality
-- **Chi Angle MAE**: Mean Absolute Error for torsion angles (χ1, χ2, χ3, χ4)
-- **Sidechain RMSD**: All-atom sidechain RMSD
-
-### Cyclization Validation
-- **Success Rate**: Percentage of structures with valid cyclization bonds
-- **Final Energy**: Force field energy after minimization (kJ/mol)
-- **Bond Distance**: Distance between cyclization atoms (Å)
-
-## Hardware Requirements
-
-- **Training**: 4-8 NVIDIA GPUs with 24GB+ memory (RTX4090 recommended)
-- **Inference**: Single GPU with 16GB+ memory
-- **Relaxation**: CPU or GPU (OpenMM with CUDA support)
-
-## License
-
-This project is for academic research purposes.
+If you would like, you can also add maintainer contacts for code-level issues in this section.
 
 ## Acknowledgments
 
-This project builds upon several excellent open-source projects:
-- [FoldFlow](https://github.com/DreamFold/FoldFlow) - SE(3) flow matching for protein structure
-- [EquiformerV2](https://github.com/atomicarchitects/equiformer_v2) - Equivariant transformer
-- [OpenFold](https://github.com/aqlaboratory/openfold) - Protein structure prediction
-- [ESM](https://github.com/facebookresearch/esm) - Protein language models
-- [OpenMM](https://openmm.org/) - Molecular dynamics simulation
+MuCO builds upon several influential open-source and scientific software projects, including:
+
+- [FoldFlow](https://github.com/DreamFold/FoldFlow)
+- [EquiformerV2](https://github.com/atomicarchitects/equiformer_v2)
+- [OpenFold](https://github.com/aqlaboratory/openfold)
+- [ESM](https://github.com/facebookresearch/esm)
+- [OpenMM](https://openmm.org/)
+
+## License
+
+This repository is intended for academic research use. See `LICENSE` for the current licensing terms.
