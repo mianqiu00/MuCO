@@ -5,11 +5,6 @@ import torch
 
 
 def seed_everything(seed: int = 42, log=False):
-    """
-    设置所有随机数种子，确保可复现性。
-    Args:
-        seed (int): 随机种子
-    """
     random.seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
     np.random.seed(seed)

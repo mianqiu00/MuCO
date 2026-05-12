@@ -13,15 +13,15 @@ from einops import rearrange
 from geomstats.geometry.special_orthogonal import SpecialOrthogonal
 from scipy.spatial.transform import Rotation
 
-from model.FoldFlow2.flow.flow_utils.so3_condflowmatcher import SO3ConditionalFlowMatcher
-from model.FoldFlow2.flow.flow_utils.so3_helpers import (
+from model.backbone.flow.flow_utils.so3_condflowmatcher import SO3ConditionalFlowMatcher
+from model.backbone.flow.flow_utils.so3_helpers import (
     exp,
     expmap,
     hat,
     log,
 )
 
-from model.FoldFlow2.flow.flow_utils.igso3 import _batch_sample
+from model.backbone.flow.flow_utils.igso3 import _batch_sample
 
 
 def _flat_vec(vec, return_batch=False):

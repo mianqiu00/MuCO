@@ -9,7 +9,7 @@ import numpy as np
 import torch
 from einops import rearrange
 
-from model.FoldFlow2.flow.flow_utils.condflowmatcher import ConditionalFlowMatcher
+from model.backbone.flow.flow_utils.condflowmatcher import ConditionalFlowMatcher
 
 
 class R3FM:

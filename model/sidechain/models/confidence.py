@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from torch import Tensor
-from dataset_cluster import get_edge_features
+from model.sidechain.dataset_cluster import get_edge_features
 from model.sidechain.utils.sidechain_utils import Idealizer
 from torch_cluster import radius_graph, knn_graph
 import math

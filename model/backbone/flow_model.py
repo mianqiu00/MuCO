@@ -1,19 +1,19 @@
 from typing import Dict, Tuple
 
 import torch
-from model.FoldFlow2.adapters import (
+from model.backbone.adapters import (
     ProjectConcatRepresentation,
     SequenceToTrunkNetwork,
     TrunkToDecoderNetwork,
 )
-from model.FoldFlow2.ff2_dependencies import FF2Dependencies
-from model.FoldFlow2.structure_network import FF2StructureNetwork
-from model.FoldFlow2.trunk import FF2TrunkTransformer
-from model.FoldFlow2.components.frozen_esm import FrozenEsmModel
+from model.backbone.ff2_dependencies import FF2Dependencies
+from model.backbone.structure_network import FF2StructureNetwork
+from model.backbone.trunk import FF2TrunkTransformer
+from model.backbone.components.frozen_esm import FrozenEsmModel
 from openfold.utils import rigid_utils as ru
 from torch import nn
-from model.FoldFlow2.flow.se3_fm import SE3FlowMatcher
-from model.FoldFlow2.data.all_atom import compute_backbone
+from model.backbone.flow.se3_fm import SE3FlowMatcher
+from model.backbone.data.all_atom import compute_backbone
 
 
 class FF2Model(nn.Module):
@@ -125,6 +125,22 @@ class FF2Model(nn.Module):
         pattern[rows_to_mask] = 1
         return pattern
 
+    @torch.no_grad()
+    def precompute_sequence_repr(self, batch: Dict[str, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
+        seq_mask_pattern = self._make_seq_mask_pattern(batch)
+        seq_emb_s, seq_emb_z = self.seq_encoder(
+            batch["aatype"],
+            batch["chain_idx"],
+            attn_mask=batch["res_mask"],
+            seq_mask=seq_mask_pattern,
+        )
+        return self.sequence_to_trunk_network(
+            seq_emb_s.to(batch["rigids_t"].device),
+            seq_emb_z.to(batch["rigids_t"].device),
+            batch["seq_idx"],
+            batch["res_mask"],
+        )
+
     @property
     def is_conditional_generation(self) -> bool:
         return self._is_conditional_generation
@@ -155,20 +171,10 @@ class FF2Model(nn.Module):
         bb_mask = batch["res_mask"].type(torch.float32)  # [B, N]
         edge_mask = bb_mask[..., None] * bb_mask[..., None, :]
 
-        # Sequence representations.
-        seq_mask_pattern = self._make_seq_mask_pattern(batch)
-
-        seq_emb_s, seq_emb_z = self.seq_encoder(
-            batch["aatype"],
-            batch["chain_idx"],
-            attn_mask=batch["res_mask"],
-            seq_mask=seq_mask_pattern,
-        )
-        seq_emb_s, seq_emb_z = seq_emb_s.to(device), seq_emb_z.to(device)
-        # Processing of the sequence emb (trainable). # LN and Lin. layers.
-        seq_emb_s, seq_emb_z = self.sequence_to_trunk_network(
-            seq_emb_s, seq_emb_z, batch["seq_idx"], batch["res_mask"]
-        )
+        if "seq_emb_s" in batch and "seq_emb_z" in batch:
+            seq_emb_s, seq_emb_z = batch["seq_emb_s"], batch["seq_emb_z"]
+        else:
+            seq_emb_s, seq_emb_z = self.precompute_sequence_repr(batch)
 
         # Structure representations.
         bb_encoder_output = self.bb_encoder(

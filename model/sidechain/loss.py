@@ -5,7 +5,7 @@ import math
 from model.sidechain.utils.so2_utils import log, exp
 from model.sidechain.utils.constants import van_der_waals_radius, atom37_to_14_mask
 from model.sidechain.utils.sidechain_utils import Idealizer
-from dataset_cluster import get_edge_features
+from model.sidechain.dataset_cluster import get_edge_features
 from torch.autograd.functional import jvp
 import random
 from torch_cluster import radius_graph, knn_graph

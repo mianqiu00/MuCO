@@ -12,7 +12,7 @@ from openfold.utils.feats import (
     torsion_angles_to_frames,
 )
 from openfold.utils.rigid_utils import Rigid
-from utils.constants import chi_true_indices, chi_mask
+from model.sidechain.utils.constants import chi_true_indices, chi_mask
 from biotite.structure import dihedral
 
 class Idealizer(nn.Module):

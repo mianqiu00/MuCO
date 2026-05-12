@@ -23,9 +23,13 @@ from model.backbone.flow import se3_fm
 from model.backbone import flow_model, ff2_dependencies
 from openfold.utils import rigid_utils as ru
 from openfold.np.residue_constants import restype_atom37_mask
+from openfold.np import residue_constants
 
 from runner import experiments_utils as eu
-from loss import metrics
+try:
+    from loss import metrics
+except ModuleNotFoundError:
+    metrics = None
 
 
 def initialize_amino_acids(gt_prot, res_mask, psi_pred, rigid_traj, aatype):
@@ -127,7 +131,7 @@ class BackboneSampler:
             self._data_conf.split = split
 
         # 2. Setup Device (Single GPU)
-        if torch.cuda.is_available():
+        if torch.cuda.is_available() and device_id >= 0:
             self.device = torch.device(f"cuda:{device_id}")
             self._log.info(f"Using GPU: {self.device}")
             # Optimize settings
@@ -146,8 +150,8 @@ class BackboneSampler:
         
         # 4. Load Checkpoint
         full_ckpt_dir = self._exp_conf.full_ckpt_dir
-        full_ckpt_dir = os.path.join(full_ckpt_dir, f"epoch_{ckpt_epoch}.pth")
-        self._load_checkpoint(full_ckpt_dir)
+        ckpt_path = full_ckpt_dir if os.path.isfile(full_ckpt_dir) else os.path.join(full_ckpt_dir, f"epoch_{ckpt_epoch}.pth")
+        self._load_checkpoint(ckpt_path)
         
         # Move to device and eval mode
         self._model = self._model.to(self.device)
@@ -287,6 +291,8 @@ class BackboneSampler:
                 )
                 
                 # 4. Compute Metrics (if possible)
+                if metrics is None:
+                    continue
                 try:
                     sample_metrics = metrics.protein_metrics(
                         pdb_path=saved_path,
@@ -314,6 +320,173 @@ class BackboneSampler:
         
         elapsed = time.time() - start_time
         self._log.info(f"Inference complete. Total time: {elapsed:.2f}s")
+
+    def build_sequence_features(self, sequence: str, pad_len: int = None):
+        """Build inference features directly from an amino-acid sequence."""
+        sequence = sequence.strip().upper()
+        if not sequence:
+            raise ValueError("Input sequence is empty.")
+
+        allowed = set(residue_constants.restypes_with_x)
+        bad = sorted(set(sequence) - allowed)
+        if bad:
+            raise ValueError(f"Unsupported residue letters in sequence: {''.join(bad)}")
+
+        aatype = np.asarray(
+            [residue_constants.restype_order_with_x.get(aa, residue_constants.unk_restype_index) for aa in sequence],
+            dtype=np.int64,
+        )
+        n_res = len(sequence)
+        res_mask = np.ones(n_res, dtype=np.float32)
+        fixed_mask = np.zeros(n_res, dtype=np.float32)
+        residue_index = np.arange(1, n_res + 1, dtype=np.int64)
+
+        # Template backbone used only for OpenFold-style feature completeness and
+        # O-atom reconstruction; the SE(3) reference state is still sampled.
+        rigids_0 = ru.Rigid.identity(
+            (n_res,), dtype=torch.float32, device=torch.device("cpu"), requires_grad=False
+        )
+        psi = torch.zeros((n_res, 2), dtype=torch.float32)
+        psi[:, 1] = 1.0
+        linear_atom37_pos = all_atom.compute_backbone(rigids_0, psi)[0].numpy()
+        atom37_mask = restype_atom37_mask[aatype].astype(np.float32)
+        atom37_pos = linear_atom37_pos * atom37_mask[..., None]
+
+        chain_feats = {
+            "aatype": aatype,
+            "seq_idx": residue_index,
+            "chain_idx": np.ones(n_res, dtype=np.int64),
+            "residue_index": residue_index,
+            "res_mask": res_mask,
+            "fixed_mask": fixed_mask,
+            "atom37_pos": atom37_pos.astype(np.float32),
+            "atom37_mask": atom37_mask,
+            "linear_atom37_pos": linear_atom37_pos.astype(np.float32),
+            "sc_ca_t": np.zeros((n_res, 3), dtype=np.float32),
+        }
+
+        gen_feats_t = self._flow_matcher.sample_ref(
+            n_samples=n_res,
+            impute=rigids_0,
+            flow_mask=None,
+            as_tensor_7=True,
+        )
+        chain_feats.update(gen_feats_t)
+        chain_feats["t"] = 1.0
+
+        tensor_feats = tree.map_structure(
+            lambda x: x if torch.is_tensor(x) else torch.tensor(x), chain_feats
+        )
+        padded_feats = du.pad_feats(tensor_feats, pad_len or n_res)
+        padded_feats = tree.map_structure(
+            lambda x: x if torch.is_tensor(x) else torch.tensor(x), padded_feats
+        )
+        return padded_feats, n_res
+
+    def sample_sequence_to_pdb(self, sequence: str, pdb_name: str, output_dir: str = None):
+        """Generate one backbone PDB directly from a sequence."""
+        output_dir = output_dir or self.output_dir
+        os.makedirs(output_dir, exist_ok=True)
+
+        feats, n_res = self.build_sequence_features(sequence)
+        res_mask = feats["res_mask"].bool().numpy()[None]
+        fixed_mask = feats["fixed_mask"].bool().numpy()[None]
+        aatype = feats["aatype"].numpy()[None]
+        linear_prot = feats["linear_atom37_pos"].numpy()[None]
+
+        batched_feats = tree.map_structure(
+            lambda x: x.unsqueeze(0).to(self.device) if torch.is_tensor(x) else x,
+            feats,
+        )
+        batched_feats = self._to_float32_tree(batched_feats)
+
+        infer_out = self.inference_fn(
+            batched_feats,
+            noise_scale=self._exp_conf.noise_scale,
+            batch_idx=1,
+            aux_traj=False,
+            precompute_seq=True,
+        )
+        rigid_traj = du.move_to_np(infer_out["rigids_final"])
+        psi_pred = infer_out["psi_pred"][0]
+
+        final_prot = initialize_amino_acids(
+            torch.tensor(linear_prot).to(self.device),
+            torch.tensor(res_mask).to(self.device),
+            torch.tensor(psi_pred).to(self.device),
+            torch.tensor(rigid_traj).to(self.device),
+            torch.tensor(aatype).long().to(self.device),
+        )
+        final_prot = du.move_to_np(final_prot)[0][res_mask[0]]
+        unpad_fixed_mask = fixed_mask[0][res_mask[0]]
+        unpad_aatype = aatype[0][res_mask[0]]
+
+        safe_name = os.path.basename(pdb_name).replace(".pdb", "")
+        prot_path = os.path.join(output_dir, f"{safe_name}.pdb")
+        return eu.write_prot_to_pdb(
+            final_prot,
+            prot_path,
+            aatype=unpad_aatype,
+            b_factors=np.tile(1 - unpad_fixed_mask[..., None], 37) * 100,
+            no_indexing=True,
+        )
+
+    def sample_sequences_to_pdb(self, sequences, pdb_names, output_dir: str = None, progress_callback=None):
+        """Generate backbone PDBs for same-length sequences in one batch."""
+        if len(sequences) != len(pdb_names):
+            raise ValueError("sequences and pdb_names must have the same length")
+        if not sequences:
+            return []
+        pad_len = max(len(seq.strip()) for seq in sequences)
+
+        output_dir = output_dir or self.output_dir
+        os.makedirs(output_dir, exist_ok=True)
+
+        feats_list = [self.build_sequence_features(seq, pad_len=pad_len)[0] for seq in sequences]
+        batched_feats = tree.map_structure(lambda *xs: torch.stack(xs, dim=0), *feats_list)
+        res_mask = batched_feats["res_mask"].bool().numpy()
+        fixed_mask = batched_feats["fixed_mask"].bool().numpy()
+        aatype = batched_feats["aatype"].numpy()
+        linear_prot = batched_feats["linear_atom37_pos"].numpy()
+
+        device_feats = tree.map_structure(lambda x: x.to(self.device), batched_feats)
+        device_feats = self._to_float32_tree(device_feats)
+
+        infer_out = self.inference_fn(
+            device_feats,
+            noise_scale=self._exp_conf.noise_scale,
+            batch_idx=1,
+            aux_traj=False,
+            precompute_seq=True,
+            progress_callback=progress_callback,
+        )
+        rigid_traj = du.move_to_np(infer_out["rigids_final"])
+        psi_pred = infer_out["psi_pred"][0]
+
+        final_prot = initialize_amino_acids(
+            torch.tensor(linear_prot).to(self.device),
+            torch.tensor(res_mask).to(self.device),
+            torch.tensor(psi_pred).to(self.device),
+            torch.tensor(rigid_traj).to(self.device),
+            torch.tensor(aatype).long().to(self.device),
+        )
+        final_prot = du.move_to_np(final_prot)
+
+        paths = []
+        for i, pdb_name in enumerate(pdb_names):
+            unpad_prot = final_prot[i][res_mask[i]]
+            unpad_fixed_mask = fixed_mask[i][res_mask[i]]
+            unpad_aatype = aatype[i][res_mask[i]]
+            safe_name = os.path.basename(pdb_name).replace(".pdb", "")
+            prot_path = os.path.join(output_dir, f"{safe_name}.pdb")
+            paths.append(eu.write_prot_to_pdb(
+                unpad_prot,
+                prot_path,
+                aatype=unpad_aatype,
+                b_factors=np.tile(1 - unpad_fixed_mask[..., None], 37) * 100,
+                no_indexing=True,
+            ))
+        return paths
     
     def _set_t_feats(self, feats, t, t_placeholder):
         feats["t"] = t * t_placeholder
@@ -340,7 +513,9 @@ class BackboneSampler:
         self_condition=True,
         noise_scale=1.0,
         context=None,
-        batch_idx=0
+        batch_idx=0,
+        precompute_seq=False,
+        progress_callback=None,
     ):
         """Inference function.
 
@@ -351,6 +526,10 @@ class BackboneSampler:
         # Run reverse process.
         sample_feats = copy.deepcopy(data_init)
         device = sample_feats["rigids_t"].device
+        if precompute_seq:
+            seq_emb_s, seq_emb_z = self._model.precompute_sequence_repr(sample_feats)
+            sample_feats["seq_emb_s"] = seq_emb_s
+            sample_feats["seq_emb_z"] = seq_emb_z
         if sample_feats["rigids_t"].ndim == 2:
             t_placeholder = torch.ones((1,)).to(device)
         else:
@@ -362,17 +541,18 @@ class BackboneSampler:
         reverse_steps = np.linspace(min_t, 1.0, num_t)[::-1]
         dt = reverse_steps[0] - reverse_steps[1]
         # dt = 1/num_t
-        all_rigids = [du.move_to_np(copy.deepcopy(sample_feats["rigids_t"]))]
+        all_rigids = [du.move_to_np(copy.deepcopy(sample_feats["rigids_t"]))] if aux_traj else []
         all_bb_prots = []
         all_trans_0_pred = []
         all_bb_0_pred = []
+        final_psi = None
         with torch.no_grad():
             if self._model_conf.embed.embed_self_conditioning and self_condition:
                 sample_feats = self._set_t_feats(
                     sample_feats, reverse_steps[0], t_placeholder
                 )
                 sample_feats = self._self_conditioning(sample_feats)
-            for t in tqdm(reverse_steps, desc=f"Processing inference steps on batch {batch_idx}"):
+            for step_idx, t in enumerate(tqdm(reverse_steps, desc=f"Processing inference steps on batch {batch_idx}"), start=1):
 
                 sample_feats = self._set_t_feats(sample_feats, t, t_placeholder)
                 model_out = self._model(sample_feats)
@@ -406,19 +586,23 @@ class BackboneSampler:
                     + fixed_mask[..., None] * gt_trans_0
                 )
                 psi_pred = model_out["psi"]
+                final_psi = psi_pred
                 if aux_traj:
                     atom37_0 = all_atom.compute_backbone(
                         ru.Rigid.from_tensor_7(rigid_pred), psi_pred
                     )[0]
                     all_bb_0_pred.append(du.move_to_np(atom37_0))
                     all_trans_0_pred.append(du.move_to_np(trans_pred_0))
-                atom37_t = all_atom.compute_backbone(rigids_t, psi_pred)[0]
-                all_bb_prots.append(du.move_to_np(atom37_t))
+                if aux_traj:
+                    atom37_t = all_atom.compute_backbone(rigids_t, psi_pred)[0]
+                    all_bb_prots.append(du.move_to_np(atom37_t))
+                if progress_callback is not None:
+                    progress_callback(step_idx, len(reverse_steps))
 
         # Flip trajectory so that it starts from t=0.
         # This helps visualization.
         flip = lambda x: np.flip(np.stack(x), (0,))
-        all_bb_prots = flip(all_bb_prots)
+        all_bb_prots = flip(all_bb_prots) if aux_traj else None
         if aux_traj:
             all_rigids = flip(all_rigids)
             all_trans_0_pred = flip(all_trans_0_pred)
@@ -432,4 +616,7 @@ class BackboneSampler:
             ret["trans_traj"] = all_trans_0_pred
             ret["psi_pred"] = psi_pred[None]
             ret["rigid_0_traj"] = all_bb_0_pred
+        else:
+            ret["rigids_final"] = sample_feats["rigids_t"]
+            ret["psi_pred"] = final_psi[None]
         return ret

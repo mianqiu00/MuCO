@@ -1,8 +1,4 @@
 def format_seconds(seconds: float) -> str:
-    """
-    将秒数转换为格式化字符串，例如:
-    3661.22 -> "1h1m1.22s"
-    """
     hours = int(seconds // 3600)
     minutes = int((seconds % 3600) // 60)
     secs = seconds % 60  # 保留小数部分

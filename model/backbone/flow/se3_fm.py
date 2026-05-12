@@ -9,7 +9,7 @@ from typing import Union
 import numpy as np
 import torch
 
-from model.FoldFlow2.flow.flow_utils.rigid_helpers import (
+from model.backbone.flow.flow_utils.rigid_helpers import (
     assemble_rigid_mat,
     extract_trans_rots_mat,
 )

@@ -7,7 +7,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from einops import rearrange
-from model.FoldFlow2.components.positional_embeddings import PositionalEmbedding
+from model.backbone.components.positional_embeddings import PositionalEmbedding
 from scipy.stats import truncnorm
 
 # FIXME: matrix_to_axis_angle is only called in `forward_gt` which does not look to be used ever. Clean this once the inference and train are working.

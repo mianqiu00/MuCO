@@ -1,0 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 216 45% 7%;
+  --foreground: 180 35% 96%;
+  --card: 218 44% 10%;
+  --card-foreground: 180 35% 96%;
+  --primary: 172 82% 43%;
+  --primary-foreground: 222 47% 8%;
+  --secondary: 219 32% 16%;
+  --secondary-foreground: 180 28% 92%;
+  --muted: 218 28% 18%;
+  --muted-foreground: 188 15% 68%;
+  --border: 190 28% 24%;
+  --input: 190 26% 20%;
+  --ring: 172 82% 43%;
+}
+
+* {
+  @apply border-border;
+}
+
+body {
+  @apply bg-background text-foreground;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+.molecule-grid {
+  background-image:
+    radial-gradient(circle at 20% 20%, rgba(45, 212, 191, 0.18), transparent 28%),
+    radial-gradient(circle at 80% 0%, rgba(59, 130, 246, 0.16), transparent 26%),
+    linear-gradient(135deg, rgba(15, 23, 42, 0.94), rgba(6, 78, 59, 0.36));
+}
+
+.glass-card {
+  background: linear-gradient(145deg, rgba(15, 23, 42, 0.86), rgba(17, 94, 89, 0.24));
+  backdrop-filter: blur(18px);
+}

@@ -1,4 +1,4 @@
-# MuCO: Multi-stage Cyclic peptide conformation Optimization
+# MuCO: Generative Peptide Cyclization Empowered by Multi-stage Conformation Optimization
 
 MuCO is a deep learning framework for generating 3D conformations of cyclic peptides through a multi-stage pipeline. The model decomposes the complex task of cyclic peptide structure prediction into three sequential stages: backbone generation, sidechain packing, and force field relaxation with cyclization validation.
 

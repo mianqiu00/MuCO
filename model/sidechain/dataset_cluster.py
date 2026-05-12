@@ -13,10 +13,10 @@ import biotite.structure as struc
 from biotite.structure.io.pdb import PDBFile
 from biotite.structure.io.pdbx import CIFFile, get_structure
 
-from utils.constants import three_to_one_letter, letter_to_num, max_num_heavy_atoms, \
+from model.sidechain.utils.constants import three_to_one_letter, letter_to_num, max_num_heavy_atoms, \
     restype_to_heavyatom_names, heavyatom_to_label, chi_alt_truths, num_to_letter, chi_true_indices, chi_mask, atom_types, atom_type_num
 
-from utils.sidechain_utils import get_bb_dihedral, get_chi_angles
+from model.sidechain.utils.sidechain_utils import get_bb_dihedral, get_chi_angles
 
 from torch_geometric.data import Data, DataLoader
 from torch_cluster import radius_graph, knn_graph
@@ -306,6 +306,44 @@ class ProteinDataset(Dataset):
                     atom_type=atom_type, chain_id=chain_id, res_id=res_id, icode=icode)
 
         return data
+
+    def data_from_features(self, structure, pdb_id='input'):
+        coords = structure['coord']
+        aa_str = structure['aa']
+        atom_mask = structure['atom_mask']
+        aa_mask = structure['mask']
+        aa_num = torch.LongTensor([letter_to_num.get(i, 20) for i in aa_str])
+        atom_type = structure['atom_type']
+        chain_id = structure['chain_id']
+        res_id, icode = structure['res_id'], structure['icode']
+
+        origin = coords[:, :4].reshape(-1, 3).mean(0)
+        coords = (coords - origin.unsqueeze(0)) * atom_mask.unsqueeze(-1)
+        seq_onehot = F.one_hot(aa_num, num_classes=21).float()
+
+        bb_dihedral = get_bb_dihedral(coords[:, 0], coords[:, 1], coords[:, 2])
+        chi_angles, chi_mask = get_chi_angles(aa_num, coords, atom_mask)
+        chi_alt_mask = chi_alt_truths[aa_num] == 1
+        chi_angles[chi_alt_mask] = ((chi_angles[chi_alt_mask] + math.pi) % math.pi) - math.pi
+        chi_alt_angles = chi_angles.clone()
+        chi_alt_angles[chi_alt_mask] = ((chi_angles[chi_alt_mask] + (2 * math.pi)) % (2 * math.pi)) - math.pi
+
+        chi_mask = chi_mask * aa_mask.unsqueeze(-1)
+        chi_angles = chi_angles * chi_mask
+        chi_alt_angles = chi_alt_angles * chi_mask
+
+        ca = coords[:, 1]
+        if self.edge_type == 'radius':
+            edge_index = radius_graph(ca, r=self.max_radius, max_num_neighbors=self.max_num_neighbors)
+        elif self.edge_type == 'knn':
+            edge_index = knn_graph(ca, k=self.max_num_neighbors)
+        else:
+            raise NotImplementedError('wrong edge type')
+
+        return Data(edge_index=edge_index, aa_str=''.join(aa_str), aa_num=aa_num, aa_onehot=seq_onehot, id=pdb_id,
+                    pos=coords, edge_attr=None, aa_mask=aa_mask, bb_dihedral=bb_dihedral, chi=chi_angles,
+                    chi_alt=chi_alt_angles, chi_mask=chi_mask, atom_mask=atom_mask, chi_alt_mask=chi_alt_mask,
+                    atom_type=atom_type, chain_id=chain_id, res_id=res_id, icode=icode)
 
     def __len__(self):
         return len(list(self.clusters.keys()))

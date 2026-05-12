@@ -2,7 +2,7 @@ data:
   split: CPSea
   valid_num: 100
   # CSV for path and metadata to training examples.
-  csv_path: /home/yitian/Projects/Musaag/src/data/metadata.csv
+  csv_path: # path to metadata
   # cluster_path: /mnt/shared_storage/processed_pdbs/clusters-by-entity-30.txt
   filtering:
     max_len: 512

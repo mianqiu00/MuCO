@@ -6,7 +6,7 @@ import re
 import torch.distributed as dist
 from openfold.utils import rigid_utils
 from openfold.np import residue_constants
-from model.FoldFlow2.data import protein
+from model.backbone.data import protein
 
 Rigid = rigid_utils.Rigid
 CA_IDX = residue_constants.atom_order["CA"]

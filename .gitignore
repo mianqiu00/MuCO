@@ -1,0 +1,8 @@
+*.pth
+__pycache__/
+*.py[cod]
+runs/
+app/node_modules/
+app/.next/
+app/run.log
+app/run.pid

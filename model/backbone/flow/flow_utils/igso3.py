@@ -2,7 +2,7 @@
 import torch
 from torch import Tensor
 from functorch import vmap
-from model.FoldFlow2.flow.flow_utils.so3_helpers import so3_exp_map
+from model.backbone.flow.flow_utils.so3_helpers import so3_exp_map
 
 
 def f_igso3_small(omega, sigma):

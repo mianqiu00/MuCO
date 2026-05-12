@@ -1,8 +1,8 @@
 from typing import Optional
 
 import torch
-from model.FoldFlow2.components.ipa_pytorch import IpaNetwork
-from model.FoldFlow2.components.network import Embedder
+from model.backbone.components.ipa_pytorch import IpaNetwork
+from model.backbone.components.network import Embedder
 from pydantic.dataclasses import dataclass
 
 # Corresponds to the "benchmark" configuration of our

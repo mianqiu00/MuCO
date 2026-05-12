@@ -6,6 +6,10 @@ import torch
 
 def create_structure_from_crds(aa,crds,atom_mask,chain_id=None,outPath="test.pdb", resseq=None, icode=None, save_traj=False):
     warnings.filterwarnings("ignore", ".*Used element.*")
+    if torch.is_tensor(crds):
+        crds = crds.detach().cpu().numpy()
+    if torch.is_tensor(atom_mask):
+        atom_mask = atom_mask.detach().cpu().numpy()
     structure_builder = StructureBuilder.StructureBuilder()
     structure_builder.init_structure(0)
     if save_traj:

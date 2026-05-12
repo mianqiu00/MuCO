@@ -7,7 +7,7 @@ from model.sidechain.utils.loader import load_seed, load_device, load_ema, load_
 from model.sidechain.utils.logger import Logger, set_log
 from model.sidechain.utils.train_utils import count_parameters
 from pathlib import Path
-from model.sidechain.dataset_cluster import get_dataloader
+from model.sidechain.dataset_cluster import ProteinDataset, get_dataloader
 from model.sidechain.utils.structure_utils import create_structure_from_crds
 from model.sidechain.utils.sidechain_utils import Idealizer
 from model.sidechain.models.cnf import CNF
@@ -18,6 +18,7 @@ import math
 import shutil
 from model.sidechain.utils.constants import chi_mask as chi_mask_true
 from model.sidechain.utils.constants import atom14_mask as atom_mask_true
+from torch_geometric.data import Batch
 
 class SidechainSampler(object):
     def __init__(self, config, use_gt_masks=False, ddp=False):
@@ -31,7 +32,11 @@ class SidechainSampler(object):
             from ml_collections import ConfigDict
             self.config.sample = ConfigDict({'n_samples': 1, 'num_steps': 10, 'coeff': 5.0})
             
-        self.train_loader, self.test_loader, _, _ = get_dataloader(self.config, ddp=ddp, sample=True)
+        if getattr(self.config, 'direct_inference', False):
+            self.train_loader = None
+            self.test_loader = None
+        else:
+            self.train_loader, self.test_loader, _, _ = get_dataloader(self.config, ddp=ddp, sample=True)
         self.idealizer = Idealizer(use_native_bb_coords=True)
 
     def sample(self, sample_name='test', save_traj=False, inpaint=''):
@@ -46,7 +51,7 @@ class SidechainSampler(object):
             coeff=self.config.sample.coeff,
             stepsize=self.config.sample.num_steps, 
             mode=self.config.mode
-        ).cuda()
+        ).to(f'cuda:{self.device[0]}')
         
         print(f'Number of parameters: {count_parameters(self.model)}')
 
@@ -206,6 +211,78 @@ class SidechainSampler(object):
 
         print(' ')
         return self.ckpt
+
+    def _load_model_for_inference(self):
+        if hasattr(self, 'model'):
+            return
+        ckpt_dict = torch.load(self.config.ckpt, map_location='cpu', weights_only=False)
+        train_cfg = ckpt_dict['config']
+        self.model = CNF(
+            EquiformerV2(**train_cfg.model),
+            train_cfg,
+            coeff=self.config.sample.coeff,
+            stepsize=self.config.sample.num_steps,
+            mode=self.config.mode,
+        ).cuda()
+        self.ema = load_ema(self.model, decay=train_cfg.train.ema)
+        self.model, self.ema = load_checkpoint(self.model, self.ema, ckpt_dict)
+        self.model.eval()
+        self.ema.copy_to(self.model.parameters())
+
+    def sample_pdb_to_pdb(self, input_pdb, output_pdb, save_traj=False, inpaint='', progress_callback=None):
+        """Pack sidechains for one backbone PDB and write one full-atom PDB."""
+        self._load_model_for_inference()
+        if self.test_loader is not None:
+            dataset = self.test_loader.dataset
+        else:
+            dataset = ProteinDataset(
+                dataset_path=Path(input_pdb).parent,
+                **self.config.data,
+                filter_length=False,
+                test=True,
+            )
+        data = dataset.to_tensor(dataset.get_features(Path(input_pdb)))
+        if data is None:
+            raise ValueError(f"Failed to parse backbone PDB: {input_pdb}")
+        batch = Batch.from_data_list([dataset.data_from_features(data, Path(input_pdb).stem)])
+        batch = batch.to(f'cuda:{self.device[0]}')
+
+        with torch.no_grad():
+            aa_str = batch.aa_str
+            aa_num = batch.aa_num
+            coords = batch.pos
+            atom_mask = batch.atom_mask
+            chi = batch.chi
+            chi_alt = batch.chi_alt
+            chi_mask = batch.chi_mask
+            if self.use_gt_masks:
+                chi_mask = chi_mask_true.to(aa_num)[aa_num]
+                batch.chi_mask = chi_mask
+                atom_mask = atom_mask_true.to(atom_mask)[aa_num]
+                batch.atom_mask = atom_mask
+
+            batch.chi = (chi + math.pi) * chi_mask
+            batch.chi_alt = (chi_alt + math.pi) * chi_mask
+            pred_sc = self.model.decode(batch, return_traj=save_traj, inpaint=inpaint)
+            if progress_callback is not None:
+                progress_callback(self.config.sample.num_steps, self.config.sample.num_steps)
+            if save_traj:
+                pred_sc = pred_sc[-1]
+            pred_sc = (pred_sc - math.pi) * chi_mask
+            bb_coords = coords[:, :4]
+            all_atom_coords = self.idealizer(aa_num, bb_coords, pred_sc) * atom_mask.unsqueeze(-1)
+
+            create_structure_from_crds(
+                aa_str[0],
+                all_atom_coords,
+                atom_mask,
+                batch.chain_id[0],
+                resseq=batch.res_id[0],
+                icode=batch.icode[0],
+                outPath=str(output_pdb),
+                save_traj=False,
+            )
+        return str(output_pdb)
 
 if __name__ == '__main__':
     import argparse

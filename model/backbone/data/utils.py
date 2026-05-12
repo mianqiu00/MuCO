@@ -14,7 +14,7 @@ from typing import Dict, List, Tuple, Union, Any
 from Bio import PDB
 from Bio.PDB.Chain import Chain
 import dataclasses
-from model.FoldFlow2.data.protein import Protein
+from model.backbone.data.protein import Protein
 
 # Global map from chain characters to integers.
 ALPHANUMERIC = string.ascii_letters + string.digits + " "

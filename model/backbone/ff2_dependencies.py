@@ -1,22 +1,22 @@
 # FF modular model for designs with multiple modalities.
 
-from model.FoldFlow2.adapters import (
+from model.backbone.adapters import (
     ProjectConcatRepresentation,
     SequenceToTrunkNetwork,
     TrunkToDecoderNetwork,
 )
-from model.FoldFlow2.structure_network import (
+from model.backbone.structure_network import (
     EmbedderConfig,
     FF2StructureNetwork,
     FF2StructureNetworkConfig,
 )
-from model.FoldFlow2.trunk import (
+from model.backbone.trunk import (
     FF2TrunkBlockConfig,
     FF2TrunkTransformer,
 )
-from model.FoldFlow2.components.frozen_esm import FrozenEsmModel
+from model.backbone.components.frozen_esm import FrozenEsmModel
 from functools import lru_cache
-from model.FoldFlow2.flow.se3_fm import SE3FlowMatcher
+from model.backbone.flow.se3_fm import SE3FlowMatcher
 
 dependency = lambda fn : property(lru_cache()(fn))
 

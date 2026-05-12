@@ -21,9 +21,9 @@ from scipy.spatial.transform import Rotation
 from torch.utils import data
 from tqdm import tqdm
 
-from model.FoldFlow2.data import utils as du
-from model.FoldFlow2.flow.flow_utils.rigid_helpers import assemble_rigid_mat, extract_trans_rots_mat
-from model.FoldFlow2.flow.flow_utils.so3_helpers import so3_relative_angle
+from model.backbone.data import utils as du
+from model.backbone.flow.flow_utils.rigid_helpers import assemble_rigid_mat, extract_trans_rots_mat
+from model.backbone.flow.flow_utils.so3_helpers import so3_relative_angle
 from openfold.data import data_transforms
 from openfold.utils import rigid_utils
 
@@ -62,15 +62,13 @@ def get_csv_row(csv, idx, is_linear=False):
     else:
         raise ValueError("Need chain identifier.")
     if is_linear:
-        processed_file_path = csv_row["processed_path"].replace("cyclic", "linear").replace("data/yitian_wang", "home/yitian")
+        processed_file_path = csv_row["processed_path"].replace("cyclic", "linear")
     else:
-        processed_file_path = csv_row["processed_path"].replace("data/yitian_wang", "home/yitian")
+        processed_file_path = csv_row["processed_path"]
     chain_feats = _process_csv_row(csv, processed_file_path, is_linear)
-
     if is_linear:
-        gt_bb_rigid = rigid_utils.Rigid.from_tensor_4x4(chain_feats["linear_rigidgroups_0"])[:, 0]
-        return chain_feats, gt_bb_rigid, pdb_name, csv_row
-    
+        return chain_feats, None, None, None
+
     gt_bb_rigid = rigid_utils.Rigid.from_tensor_4x4(chain_feats["rigidgroups_0"])[:, 0]
     flowed_mask = np.ones_like(chain_feats["res_mask"])
     if np.sum(flowed_mask) < 1:
@@ -124,8 +122,7 @@ def _process_csv_row(csv, processed_file_path, is_linear):
 
     if is_linear:
         final_feats = {
-            "linear_atom37_pos": chain_feats["all_atom_positions"], 
-            "linear_rigidgroups_0": chain_feats["rigidgroups_gt_frames"]
+            "linear_atom37_pos": chain_feats["all_atom_positions"]
         }
         return final_feats
 
@@ -232,7 +229,7 @@ class PdbDataset(data.Dataset):
         self.max_len = int(pdb_csv["modeled_seq_len"].max())
         self.raw_csv = pdb_csv
     
-        pdb_csv = pdb_csv[pdb_csv.type == "cyclic_aligned"]
+        pdb_csv = pdb_csv[pdb_csv.type == "cyclic"]
         pdb_csv = pdb_csv[pdb_csv.cluster == self._data_split]
 
         if filter_conf.subset is not None:
@@ -350,8 +347,7 @@ class PdbDataset(data.Dataset):
         return pickle.loads(data)
 
     def _create_split(self, pdb_csv, valid_num):
-        rng = np.random.default_rng(42)
-        shuffled_idx = rng.permutation(len(pdb_csv))
+        shuffled_idx = np.random.permutation(len(pdb_csv))
         
         split_point = len(pdb_csv) - valid_num
         
@@ -396,9 +392,9 @@ class PdbDataset(data.Dataset):
             return None
 
         # print(f"[DEBUG] Train dataset getitem")
-        chain_feats, gt_bb_rigid, pdb_name, _ = self._get_csv_row(idx)
+        chain_feats, gt_bb_rigid, pdb_name, csv_row = self._get_csv_row(idx)
         if self.load_linear_data:
-            linear_chain_feats, linear_bb_rigid, _, _ = self._get_csv_row(idx, is_linear=True)
+            linear_chain_feats, _, _, _ = self._get_csv_row(idx, is_linear=True)
             chain_feats.update(linear_chain_feats)
         chain_feats = tree.map_structure(torch.Tensor, chain_feats)
 
@@ -406,7 +402,7 @@ class PdbDataset(data.Dataset):
             # Sample t and flow.
             t = np.random.uniform(self._data_conf.min_t, 1.0)
             gen_feats_t = self._gen_model.forward_marginal(
-                rigids_0=gt_bb_rigid, t=t, flow_mask=None, rigids_1=linear_bb_rigid
+                rigids_0=gt_bb_rigid, t=t, flow_mask=None, rigids_1=None
             )
         elif self.is_training and self.is_OT:
             t = np.random.uniform(self._data_conf.min_t, 1.0)
@@ -497,17 +493,12 @@ class PdbDataset(data.Dataset):
 
         else:
             t = 1.0
-            # gen_feats_t = self.gen_model.sample_ref(
-            #     n_samples=gt_bb_rigid.shape[0],
-            #     impute=gt_bb_rigid,
-            #     flow_mask=None,
-            #     as_tensor_7=False,
-            # )
-            # rigid_update = gen_feats_t["rigids_t"]
-            # rigids_t =linear_bb_rigid.compose(rigid_update)
-            rigids_t =linear_bb_rigid
-            gen_feats_t = {}
-            gen_feats_t["rigids_t"] = rigids_t.to_tensor_7()
+            gen_feats_t = self.gen_model.sample_ref(
+                n_samples=gt_bb_rigid.shape[0],
+                impute=gt_bb_rigid,
+                flow_mask=None,
+                as_tensor_7=True,
+            )
         chain_feats.update(gen_feats_t)
         chain_feats["t"] = t
 

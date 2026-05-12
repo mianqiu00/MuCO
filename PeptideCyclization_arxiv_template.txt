@@ -1,0 +1,1511 @@
+                                                                                                      January 30, 2026
+
+
+
+
+        MuCO: Generative Peptide Cyclization Empowered by
+        Multi-stage Conformation Optimization
+        Yitian Wang 1,3 , Fanmeng Wang 1,3 , Angxiao Yue 1 , Wentao Guo∗ 2 , Yaning Cui 3 ,
+        Hongteng Xu† 1,4,5
+        1
+          Gaoling School of Artificial Intelligence, Renmin University of China
+        2
+          WuXi AppTec
+        3
+          DP Technology
+        4
+          Beijing Key Laboratory of Research on Large Models and Intelligent Governance
+        5
+          Engineering Research Center of Next-Generation Intelligent Search and Recommendation, MOE
+
+
+                                                          Abstract
+        Modeling peptide cyclization is critical for the virtual screening of candidate peptides with desirable
+        physical and pharmaceutical properties. This task is challenging because a cyclic peptide often
+        exhibits diverse, ring-shaped conformations, which cannot be well captured by deterministic pre-
+        diction models derived from linear peptide folding. In this study, we propose MuCO (Multi-stage
+        Conformation Optimization), a generative peptide cyclization method that models the distribution of
+        cyclic peptide conformations conditioned on the corresponding linear peptide. In principle, MuCO
+        decouples the peptide cyclization task into three stages: topology-aware backbone design, generative
+        side-chain packing, and physics-aware all-atom optimization, thereby generating and optimizing
+        conformations of cyclic peptides in a coarse-to-fine manner. This multi-stage framework enables
+        an efficient parallel sampling strategy for conformation generation and allows for rapid exploration
+        of diverse, low-energy conformations. Experiments on the large-scale CPSea dataset demonstrate
+        that MuCO significantly outperforms state-of-the-art methods in consistently in physical stability,
+        structural diversity, secondary structure recovery, and computational efficiency, making it a promising
+        computational tool for exploring and designing cyclic peptides.
+
+
+
+1           Introduction
+Cyclic peptides constitute a significant subset for drug discovery, chemical biology, and material design (Jing
+and Jin, 2020; Ji et al., 2024; Song et al., 2021), whose ring-closed conformations confer them enhanced
+stability, proteolytic resistance, membrane permeability, and target-binding specificity compared to the
+corresponding linear peptides (Dougherty et al., 2019; Mannes et al., 2022; Lee et al., 2019). In general, a
+cyclic peptide exists as highly dynamic conformational ensembles exploring a complex energy landscape
+shaped by geometric constraints (Schlick et al., 2021; Jiang et al., 2025; Zorzi et al., 2017). Peptide cyclization
+refers to predicting cyclic peptide conformations given linear peptide sequences or conformations. It helps
+identify unobserved potential wells and explore hidden conformations governing biological activity (Persch
+et al., 2015; Sekhar and Kay, 2013), which is essential for the virtual screening of peptides with desirable
+physical and pharmaceutical properties.
+Currently, physical simulation methods (Pracht et al., 2020; Hollingsworth and Dror, 2018) offer relatively
+high precision in peptide cyclization. However, they are computationally prohibitive for large-scale explo-
+ration, which motivates the development of learning based methods. Focusing on peptide cyclization, the
+general protein folding method, such as AlphaFold3 (AF3) (Abramson et al., 2024), remains suboptimal,
+struggling with ring closure and atomic clashes (Zhang et al., 2025). Specialized methods like HighFold2 (Zhu
+    ∗
+        Work done while at Atombeat Inc.
+    †
+        Corresponding authors. Email: hongtengxu@ruc.edu.cn
+
+
+                                                               1
+Figure 1 . An illustration of the 3-stage scheme of MuCO. The generation process is decoupled into three stages,
+including i) Topology-Aware Backbone Generation for backbone scaffold B by SE(3) flow matching on condition of
+sequence embedding, ii) Generative Side-chain Packing for side chain sampling via conditional flow matching with
+cyclic RPE, iii) Physics-Aware Optimization by Charmm36 forcefield to yield final energy minimized conformation.
+
+
+et al., 2025) and AfCycDesign (Rettie et al., 2025) are based on AlphaFold2 (AF2) (Jumper et al., 2021)
+and cyclize peptides by deterministic folding, thereby failing to generate diverse conformations. As a result,
+given a linear peptide, how to generate cyclic peptide conformations with guaranteed physical rationale and
+diversity is still an open problem.
+In this study, we propose MuCO, an effective conformation generation method for cyclic peptides, which
+achieves promising peptide cyclization via Multi-stage Conformation Optimization. As illustrated in
+Figure 1, MuCO decouples peptide cyclization into three stages, including i) topology-aware cyclic backbone
+generation, ii) generative side-chain packing, and iii) physics-aware conformation optimization. Given
+a linear peptide, the first stage generates diverse backbone scaffolds that satisfy the ring-closure (Huguet
+et al., 2024). The second stage finds optimal rotamer configurations for each backbone, generating full-atom
+conformations through side-chain sampling and suppressing the risk of steric clashes (Lee and Kim, 2025).
+The third stage applies Charmm36 (Huang and Jr., 2013) to fine-tune the local geometry of each conformation
+under potential energy minimization, guiding the conformations into a valid and stable molecular space.
+Compared to existing methods (Zhu et al., 2025; Zhang et al., 2025), MuCO has advantages on both
+computational efficiency and generation quality. In particular, unlike the end-to-end strategy that attempts
+to simultaneously predict or generate all atoms, the multi-stage framework of MuCO supports an efficient
+parallel sampling strategy that rapidly identifies potential wells and various cyclization modes that are often
+inaccessible in single-shot or several-shot predictors. As a result, MuCO can generate reliable conformations
+with high efficiency. Experiments on the large-scale CPSea dataset (Yang et al., 2025) demonstrate that
+MuCO significantly outperforms state-of-the-art methods (Zhu et al., 2025), particularly in physical stability,
+structural diversity, secondary structure recovery, and computational efficiency.
+
+
+2     Related Work
+2.1   Peptide Folding and Design
+The prediction of peptide conformation has largely followed the protein folding paradigm. AF2 (Jumper et al.,
+2021) accurately folds peptides using MSAs, while ESMFold (Lin et al., 2022) leverages protein language
+models (PLMs) to infer structures directly from single sequences, bypassing the need for alignment searching.
+Recently, generative modeling has expanded this frontier: AlphaFold3 (Abramson et al., 2024), Chai-1 (Chai
+Discovery team et al., 2024), Boltz-1 (Wohlwend et al., 2025; Passaro et al., 2025), and SimpleFold (Wang
+et al., 2025b) utilize diffusion based or iterative refinement modules to generate high-fidelity all-atom
+conformations for peptides.
+
+
+                                                       2
+                                 z0 ∈ MB : (SE(3) × T)L                 χ0 ∈ MC : T4L
+
+
+
+
+                            hS         Stage 1:           Backbone B        Stage 2:            X     Stage 3:
+    Sequence       Frozen
+                                                                                                f
+                                    Topology-Aware                         Generative               Physics-Aware   X
+       S           ESM-2                                               Side-chain Packing           Optimization
+                                    Backbone Gen.
+
+
+                                                                         Cyclic RPE Injection
+
+
+
+Figure 2 . MuCO framework overview. The process decouples into three stages: (1) cyclic backbone generation on
+MB , (2) side-chain packing on MC with Cyclic RPE, and (3) physics-aware refinement to reach the local energy
+minimum X.
+
+
+Unlike the above end-to-end folding methods, some methods generate peptide conformations by two steps:
+backbone design and side-chain packing. For backbone design, FrameDiff (Yim et al., 2023b) and Frame-
+Flow (Yim et al., 2023a) apply SE(3) diffusion and flow matching to generate protein backbones, respectively.
+Based on them, FoldFlow (Bose et al., 2024) and FoldFlow2 (Huguet et al., 2024) further integrate optimal
+transport and sequence conditioning (via ESM based embeddings (Lin et al., 2022)) to generate diverse
+scaffold topologies. ReQFlow (Yue et al., 2025) improves the generation efficiency using rectified quaternion
+flows. For side-chain packing, methods like DiffPack (Zhang et al., 2023), H-Packer (Visani et al., 2024), and
+FlowPacker (Lee and Kim, 2025) treat rotamer packing as a generative problem, learning the conditional
+distribution of side-chains given a fixed backbone These decoupled generation methods have been widely
+used in protein design, which is applicable for generating peptide conformations.
+The above methods achieve a promising progress in linear peptide folding and design. However, they are
+often inapplicable in cyclic peptide generation because of lacking appropriate ring-closure constraints.
+
+2.2     Cyclic Peptide Modeling and Generation
+Focusing on cyclic peptide modeling and generation, the mainstream solution is adapting models pretrained
+on linear peptides. AfCycDesign (Rettie et al., 2025) and HighFold2 (Zhu et al., 2025) modify the Relative
+Positional Encoding (RPE) of AF2 to ensure ring-closure. CP-Composer (Jiang et al., 2025) decomposes
+cyclic constraints into linear sub-units and achieves zero-shot cyclic peptide design. These methods, however,
+are not trained on true cyclic peptides because of the data scarcity issue, which limits their abilities to find
+ring-closure, low-energy conformations. As a result, they often fail to model the specific strain and distortions
+introduced by cyclization.
+The recent release of the CPSea dataset (Yang et al., 2025) provides the first large-scale resource of cyclic
+peptide conformations, enabling a paradigm shift from linear-to-cyclic adaptation to native cyclic generation.
+By leveraging the dataset, our work proposes a multi-stage conformation optimization strategy for generative
+peptide cyclization, generating high-quality conformational ensembles of cyclic peptides efficiently.
+
+3     Proposed Method
+3.1     Problem Formulation and Modeling Principle
+As mentioned above, we formulate peptide cyclization as a conditional generation problem. Denote S =
+{s1 , . . . , sL } as a linear peptide of length L, where si represents the type of the i-th residue. Denote
+X ∈ RN ×3 as the N 3D atomic coordinates of the corresponding cyclic peptide. Following the rigid-frame
+convention (Jumper et al., 2021), we can parametrize X equivalently by the rigid transformation of backbone
+and internal torsion angles of side chains:
+     • Backbone scaffold B : The backbone geometry is represented by the tuple B = {(Ti , ψi )}L  i=1 . Here,
+       Ti = (Ri , ti ) ∈ SE(3) denotes the rigid transformation of the local frame of the i-th residue (con-
+
+                                                               3
+      structed from the “N − Cα − C − O” structure of residue), where Ri ∈ SO(3) is the rotation matrix and
+      ti ∈ R3 is the translation vector. Additionally, ψi ∈ T is the backbone torsion angle determining the
+      position of the carbonyl oxygen atom, where T = R/2π Z denotes the 1-torus representing the angular
+      periodicity.
+   • Side chains C : The conformation of side-chains is parameterized by a set of torsion angles C = {χi }L    i=1 .
+                                                                                                            4
+     For each residue si , the side chain is determined by up to four angles χi = [χi,1 , . . . , χi,4 ] ∈ T .
+This geometric data representation captures rotational invariance and local rigidity of conformation, and the
+atomic coordinates X can be recovered by the Forward Kinematics function, i.e., X = FK(B, C).
+We aim to learn the conditional distribution p(X|S) and sample diverse conformations that are ring-closure
+and low-energy efficiently from p(X|S), which leads to the proposed MuCO method.
+In principle, MuCO leverages the equivalence between p(X|S) and p(B, C|S) and the hierarchical structure
+of p(B, C|S) to model p(X|S) in a decomposed format:
+                                 p(X|S) = p(B, C|S) = p(B|S) · p(C|B, S)                                        (1)
+                                                      | {z } | {z }
+                                                            Backbone   Side chains
+
+Here, p(B|S) is conditional distribution the backbone scaffold B given the residue sequence S , and p(C|B, S)
+is the conditional distribution of the side chains C given B and S . Based on this decomposition, MuCO
+achieves a three-stage conformation optimization pipeline. As illustrated in Figure 1, it generates multiple
+cyclic peptide conformations given a linear peptide S by
+              1) Backbone generation:           {Bk }K
+                                                     k=1 ∼ pθ (·|S),
+                                            k M
+              2) Side-chain packing:      {Cm }m=1 ∼ pτ (·|Bk , S),             ∀k,
+                                            k
+                                          fm = FK(Bk , Cm k                                                     (2)
+              3) Conformation refinement: X                 ),
+                                                 k                         k
+                                                Xm = arg min E(X) + R(X, X
+                                                                         fm  ),             ∀k, m.
+                                                             X
+
+The first stage samples K multiple cyclic backbones, the second stage generates K × M conformations
+by sampling M side-chain rotamers for each backbone. Finally, the third stage achieves energy-driven
+conformation refinement, where E denotes the energy functional of atoms and R denotes the regularization
+term determined by the initial conformation X
+                                            fmk . Here, p(B|S) and p(C|B, S) are parameterized by two
+
+generative models, whose parameters are denoted as θ and τ , respectively. In such a situation, the first
+two stages can be executed in parallel on GPUs, which reduces the amortized runtime per conformation
+significantly.
+The keypoint of MuCO lies in ensuring the above three stages achieve consistent conformation optimization.
+In particular, Stage-1 should generate backbones with guaranteed ring-closure structures. Stage-2 should
+resolve steric clashes in dense environments. Stage-3 should refine the all-atom conformations, maintaining
+the ring-closure structures and avoiding steric clashes. Moreover, the second and third stages should reduce
+the potential energy of conformation consistently. In the following content, we will introduce the technical
+details of MuCO and show how the above requirements are satisfied.
+
+3.2   Multi-stage Conformation Optimization
+Figure 2 illustrates the computational pipeline of MuCO. To meet the above requirements, our MuCO method
+imposes implicit cyclization constraints into the model by training on the cyclic peptide dataset and applies
+force field optimization in Stage-3, enabling cyclization to emerge naturally with guarantees in rationality
+and diversity. Detailed training strategy is provided in Appendix A
+Stage-1: Topology-Aware Cyclic Backbone Generation. Following FoldFlow2 (Huguet et al., 2024), we
+employ a sequence-conditioned SE(3) flow matching framework for cyclic backbone generation. We model a
+
+                                                        4
+conditional probability path pt (B|S) that interpolates between a simple prior distribution p0 (typically a Gaus-
+sian distribution on R3 and isotropic distribution on SO(3)) and the data distribution p1 over time t ∈ [0, 1].
+This process is governed by the velocity field on the manifold of backbone, denoted as MB := SE(3)L × TL .
+We parameterize the velocity field vθB (zt , t, hS ) by an Invariant Point Attention (IPA) Transformer (Jumper
+et al., 2021), where t ∈ [0, 1], hS is the embedding of the linear peptide, derived from a pre-trained ESM-2
+model (Lin et al., 2022). zt is the backbone state at time t, where z0 = {Ti0 = (Ri0 , t0i )}L   i=1 is noise sampled
+from the prior distribution, z1 = {Ti1 = (Ri1 , t1i )}L    i=1 is observed data, and z t = {T i
+                                                                                               t = (Rt , tt )}L with
+                                                                                                       i i i=1
+tti = (1 − t) · t0i + t · t1i and Rit = expRi0 (t · logRi0 (Ri1 )).
+Applying Riemannian flow matching (Bose et al., 2024; Chen and Lipman, 2024), we can train the model via
+                                                                               2
+                                minθ Et,z1 ,zt vθB (zt , t, hS ) − uB
+                                                                    t (zt |z1 ) T M ,                            (3)
+
+where ∥ · ∥T M denotes the Riemannian metric on the tangent space, uB
+                                                                    t is the velocity field determined by zt .
+For the backbone torsion angles {ψi }L
+                                     i=1 , we can generate them by passing the last-layer embeddings of vθB
+by an MLP.
+Remark 1: Training on cyclic peptides leads to implicit ring-closure constraints. Here, a critical challenge
+is to ensure the ring-closure structures of the generated backbones. Traditional methods train models on
+linear peptides and impose hard geometric constraints during generation (Rettie et al., 2025; Zhu et al., 2025)
+or apply post-hoc energy minimization to force closure (Zhang et al., 2025), which may introduce unnatural
+physical bond strains or atom clashes. With the help of the CPSea dataset (Yang et al., 2025), we can train
+our model directly on cyclic peptides (see the data construction part of the following experimental section),
+making cyclization an intrinsic geometric property encoded within the conformational subspace. After
+training on cyclic peptides, the ring-closure structures are fitted by the learned velocity field vθB — the model
+captures the global trajectory of all residues, whose endpoints are cyclic backbones with high probabilities.
+Consequently, the generated backbones serve as geometrically valid scaffolds for the subsequent packing
+stage.
+Stage-2: Conditional Generative Side-chain Packing. Once the backbone scaffold B is determined, the
+next challenge is to fill it with side-chain rotamers C . We explicitly model the conditional distribution
+pτ (C|B, S) in the Torsional Flow Matching (TFM) framework (Lee and Kim, 2025). In particular, the space
+of side chain is a high-dimensional hypertorus MC = T4L , where each dimension corresponds to a periodic
+torsion angle χ. We learn a velocity field vtC : T4L × [0, 1] × SE(3)L → T × T4L that transports noise
+sampled from a uniform prior distribution from the torus sampled from the target rotamer distribution. The
+optimization problem of TFM is
+                                                                                2
+                              minτ Et,χ1 ,χt vτC (χt , t, B, S) − uCt (χt |χ1 ) T ,                              (4)
+
+where vτC is parameterzied by Equivariant Graph Neural Network (EGNN), uCt is the conditional vector field
+derived from the geodesic path on the torus, and χt is the interpolation between the random noise χ0 and
+sampled data χ1 at time t. Notably, vτC is conditioned on the backbone B and the sequence S . We extract
+E(3)-invariant geometric features from B and fuse them with sequence embeddings hS as the input of vτC .
+Crucially, by modeling the distribution rather than regressing a single conformation (Wang et al., 2025a),
+we gain the flexibility to sample multiple plausible rotameric states for residues under high steric stress,
+effectively breathing within the tight rigid cyclic backbone.
+Remark 2: Cyclic-aware graph encoding mitigates clashes. Existing packing models like DiffPack (Zhang
+et al., 2023) and FlowPacker (Lee and Kim, 2025) rely on linear relative positional encodings (RPE), which
+assume that residue 1 and residue L are spatially and sequentially distant. This assumption breaks down in
+cyclic peptides: The geometric constraints of ring-closure often force side chains to be folded into a compact
+space, creating a high-density environment where packers struggle to find clash-free solutions. Similar to
+existing methods (Rettie et al., 2025; Zhu et al., 2025), we construct a residue graph Gcyc for each B and
+
+
+                                                          5
+augment vτC with a cyclic-aware graph encoding mechanism to resolve the clashing issue. In particular,
+denote the adjacency matrix of Gcyc as A = [aij ] ∈ {0, 1}L×L , aij = 1 iff the residues si and sj are adjacent.
+Accordingly, for any two residues i and j , the cyclic topological distance, denoted as dcyc (i, j), is defined as
+the shortest path distance between them. Given this cyclic metric, we replace the linear RPE with a Cyclic
+Relative Positional Encoding: injecting the metric into the node-to-node attention bias of the underlying
+EGNN (e.g., EquiformerV2 (Liao et al., 2024)). By topologically rewiring the graph, the model perceives
+the boundary residues as immediate neighbors. This allows our model to generate coordinated side-chain
+packing across the cyclization junction, suppressing critical steric clashes.
+Training details of Stage-1 and Stage-2 are provided in Appendix A.
+Stage-3: Physics-Aware Conformation Optimization. While the preceding flow matching stages effectively
+navigate the global conformational landscape to identify favorable high-probability regions, the generated
+atomic coordinates are inherently stochastic samples from a learned distribution. For each generated
+conformation, while the global topology might be reasonable, its local atomic placements often exhibit minor
+deviations from ideal bond lengths or van der Waals radii, leading to high-energy steric clashes. This is
+particularly pronounced in sampling-based approaches compared to deterministic prediction methods, as
+the model prioritizes distributional diversity over mean-squared-error minimization. To resolve this issue,
+we implement a physics-aware refinement stage like CP-Composer Jiang et al. (2025) does, applying a
+Charmm36 based force field engine (Huang and Jr., 2013) to optimize generated conformations and filtering
+out invalid ones.
+To automate this process for diverse cyclization modes without manual intervention, we design a rule-based
+topology detection algorithm, which can automatically infer the intended covalent connectivity based on the
+proximity of reactive groups in the generated conformation Xf, and apply our updated force field engine to
+minimize the energy (detailed algorithms provided in Appendix B).
+Remark 3: The guarantee on energy minimization. Notably, this process corresponds to the energy-driven
+conformation optimization shown in (2). When applying Charmm36, we design the E(X) in (2) as the
+potential energy of X based on atomic coordinates and bonds, and implement the R(X, X)        f in (2) as
+w           2
+ 2 ∥X − X∥F , with a weight w > 0. In such a situation, Charmm36 optimizes conformation by force-field
+         f
+relaxation with Langevin thermostat (Davidchack et al., 2009), reducing the potential energy monotonically
+during optimization.
+In summary, MuCO leverages the best of both worlds: the generative flow efficiently jumps across high-
+energy barriers to explore diverse potential wells, while the physics based optimization ensures that the final
+structures descend into valid, physically realizable local minima.
+
+3.3    Efficient Exploration via Hierarchical Sampling
+A critical advantage of MuCO’s decoupled framework over monolithic end-to-end models (e.g., HighFold2)
+is the capability for efficient, tree-structured parallel sampling. Since the backbone generation (Stage-1) and
+side-chain packing (Stage-2) are disentangled, we can employ a hierarchical K × M sampling strategy that
+significantly expands the exploration of the conformational landscape with minimal computational overhead.
+Tree-Structured Inference. Instead of performing expensive full-atom recycling for every sample, we first
+generate K diverse backbone scaffolds using the lightweight backbone flow model. For generated backbones
+{Bk }K                                                                           k K,M
+     k=1 , we then sample K × M distinct side-chain packing configurations {Cm }k,m=1 in parallel using
+the generative packing model. This approach leverages the reduced parameter size of our specialized sub-
+modules, enabling high-throughput generation orders of magnitude faster than repeatedly running large-scale
+AF2-based models (Zhu et al., 2025; Rettie et al., 2025).
+Broad Potential Well Coverage. This hierarchical strategy is crucial for the success of the subsequent
+Physics-Aware Optimization (Stage-3). As aforementioned, the energy landscape of cyclic peptides is
+
+
+                                                        6
+rugged, containing numerous deep, narrow local minima separated by high energy barriers. By generating
+a massive ensemble of conformations (K × M ), MuCO effectively seeds a wide variety of potential wells.
+Consequently, the force-field relaxation does not need to traverse high barriers globally but simply descends
+from these diverse initialized points into their respective local minima. This greatly increases the probability
+of locating the true global minimum and discovering novel, low-energy metastable states that are often missed
+by deterministic prediction (Zhu et al., 2025).
+
+
+4       Experiments
+We evaluate the performance of MuCO in physical stability, structural diversity, secondary structure recovery,
+and computational efficiency. In particular, we conduct benchmarks on the curated CPSea dataset to
+demonstrate the advantages of our MuCO over state-of-the-art methods in peptide cyclization. All inference
+experiments are conducted on a single NVIDIA RTX 4090 GPU.
+The following subsections highlight the most representative experimental results. We provide exhaustive
+numerical comparisons across all sub-datasets and a wide array of visualizations in the Appendix F.
+
+4.1     Experimental Setup
+Dataset Construction. Besides developing MuCO, another contribution of our work is constructing a
+large-scale, paired benchmark datasets for peptide cyclization based on the CPSea repository (Yang et al.,
+2025). In particular, for each target cyclic conformation Xcyc in CPSea, we generated a corresponding linear
+precursor Xlin using SimpleFold 3M (Wang et al., 2025b) based on the amino acid sequence S . Given all
+linear-cyclic peptide pairs, we apply a rigorous data filtering pipeline, constructing the proposed dataset using
+those high-confidence conformation pairs. Finally, this dataset is partitioned into mutually exclusive subsets
+based on functional annotations to prevent data leakage: CPSea-Train (The conformation pairs for training
+and validation), CP-Bind (high affinity), CP-Trans (cell-penetrating), CP-Core (initial intersection subset
+of CP-Bind and CP-Trans), and CPSea-PDB (gold standard data from Protein Data Bank). The last four
+subsets lead to a testing set containing 10,132 cyclic conformations in total. These conformations work as the
+Ground Truth (GT) and provide references when evaluating model performance. Detailed filtering strategy
+and analysis of datasets are provided in Appendix C.
+Baselines and Implementations. We compare MuCO against two categories of state-of-the-art methods:
+i) Peptide folding models adapted from AF2, including HighFold2 (Zhu et al., 2025) and AfCycDesign (Ret-
+tie et al., 2025). These two models are pretrained on the AF2 dataset that has covered CPSea.
+ii) Geometric Deep Learning (GDL) models for all-atom conformation prediction and optimization, including
+EGNN (Satorras et al., 2021) and WGFormer (Wang et al., 2025a). These two models are trained to predict
+cyclic conformations based on the linear ones.
+Notably, all the baselines apply our physics-aware optimization method (i.e., Stage-3 of MuCO) to guarantee
+a reasonable success rate when generating cyclic conformations. In addition, when evaluating the model
+performance in generation quality, MuCO applies the single sampling mode (i.e. setting K = M = 1) for a
+fair comparison. Training details of the baselines are provided in Appendix A.
+Metrics. We evaluate performance using three key dimensions: i) Success Rate, defined as the percentage of
+generated conformations satisfying geometric bond criteria; ii) Physical Stability, measured by the mean
+potential energy (E ) calculated via Charmm36; and iii) Diversity, quantified by the Shannon Entropy (H ) of
+cyclization modes1 (HC ) and secondary structure clusters (HSS ). Detailed descriptions of the metrics are
+provided in Appendix D.
+    1
+    We consider three cyclization modes in this study, including i) H2T (Head-to-Tail cyclization mode), ii) C2C (Cys-Cys mode
+corresponding to Disulfide), iii) K2DE (Isopeptide bond of K(Lys)-D(Asp) or K-E(Glu) in side chains). Detailed definitions are
+provided in Appendix B.1.
+
+
+                                                              7
+4.2    Main Results: Generation Quality and Diversity
+MuCO Overcomes Mode Collapse with Lower Energy. We conduct baselines and a single sample on
+MuCO to fairly compare their effectiveness in cyclization. Table 1 and Figure 3 present the quantitative
+comparison of four test sets. A critical observation is the trade-off between Success Rate and Physical
+Stability. Although AF2-based methods (HighFold2 and AfCycDesign) achieve near-perfect success rates
+(> 98%), they suffer from severe mode collapse, showing zero diversity (H ≈ 0) and failing to cover
+alternative cyclization modes (e.g., virtually 0% coverage for K2DE and Cys2Cys modes). Furthermore, their
+predicted conformations often reside in high-energy states, indicating unresolved steric clashes. In contrast,
+MuCO achieves the lowest potential energy across all datasets, significantly outperforming the baselines.
+Crucially, MuCO maintains high structural diversity, successfully recovering a balanced distribution of
+cyclization modes compared to the ground truth. Notably, MuCO reaches a success rate of around 95% even
+in the single sampling mode. These results confirm that our method effectively learns a physically meaningful
+and diverse conformational ensemble rather than memorizing a single mean conformation.
+
+Table 1 . The average performance on the testing set. In the single sampling mode, MuCO achieves the best balance
+between physical stability and structural diversity.
+
+
+                Method                                            Succ.↑         Energy↓                     Div.↑             Mode Distribution (%)
+                                                                    (%)          (kJ/mol)                    (H)              H2T             K2DE         C2C
+                GT (Ref.)                                             -            -15.8                     0.59             23.2            72.6         4.2
+                EGNN                                               85.6            108.2                     0.57             22.5            75.2         2.3
+                WGFormer                                           86.2            104.9                     0.58             21.6            76.0         2.4
+                AfCycDesign                                        98.4            116.4                     0.01             99.9             0.1         0.0
+                HighFold2                                          98.9            111.3                     0.00             99.9            0.0          0.0
+                MuCO (Ours)                                        94.0             30.2                     0.69             49.0            50.5         0.6
+
+
+
+                                       105
+                                                   (a) Success Rate (%)                                          (b) Mean Energy
+              Success Percentage (%)
+
+
+
+
+                                       100
+                                                                                                     100
+                                        95
+                                                                                       kJ/mol
+
+
+
+
+                                        90                                                               0
+                                        85
+                                                                                                     100
+                                        80
+                                        75                                                           200
+                                         CPTrans       CPBind         CPCore    CPSea PDB              CPTrans       CPBind          CPCore    CPSea PDB
+
+                                       1.0
+                                             (c) Structural Diversity (H)                            100
+                                                                                                         (d) Mode Dist. (%) on CPTrans
+                                                                                                                                                       Modes
+                                       0.8                                                            80                                                   H2T
+                                                                                                                                                           K2DE
+                Entropy Score
+
+
+
+
+                                                                                        Percentage
+
+
+
+
+                                       0.6                                                            60                                                   C2C
+
+                                       0.4                                                            40
+                                       0.2                                                            20
+                                       0.0
+                                                                                              0
+                                         CPTrans       CPBind          CPCore   CPSea PDB         GT             EGNN WG AfCyc HF2 MuCO
+                                                                MuCO (Ours)        EGNN (GDL)                      AfCycDesign (AF2)
+                                                                Ground Truth       WGFormer (GDL)                  HighFold2 (AF2)
+
+
+Figure 3 . (a) Success Rate (%): Percentage of successful cyclization. (b) Mean Potential Energy (E): Physical
+stability calculated via Charmm36. (c) Structural Diversity (HC ): Shannon entropy of conformational clusters. (d) Mode
+distribution coverage on the CPTrans dataset.
+
+
+
+                                                                                                     8
+Secondary Structure Recovery. Beyond global topology, we further analyze local secondary structures in
+Figures 4 and 5. EGNN and WGFormer fail to form regular structures, especially in β -sheets, resulting in
+excessive random coils (> 90%) with high energy. Although AF2-based models capture more secondary
+structure information, the structural diversity remains far behind the ground truth. MuCO significantly
+improves the recovery of α-helices and β -sheets, closely matching the distribution of the Ground Truth
+conformations. The high diversity score (H = 0.8 on average) further indicates that MuCO generates a rich
+mixture of secondary structures, ensuring the functional versatility of the generated cyclic peptides.
+
+                                   (a) Structural Diversity (H) (b) Secondary Structure Dist. on CPSea PDB
+                                                                                             100                                 Structures
+                                   1.0                                                                                                Helix
+                                                                                                                                      Sheet
+                                                                                              80                                      Coil
+
+                                   0.8
+                 Shannon Entropy
+
+
+
+
+                                                                           Composition (%)
+                                                                                              60
+
+                                   0.6
+                                                                                              40
+
+                                   0.4
+                                                                                              20
+
+
+                                   0.2                                                         0
+                                     CPTrans CPBind     CPCore CPSea PDB                           GT EGNN WG AfCyc HF2 MuCO
+                                                Dataset
+                                                      MuCO (Ours)          EGNN (GDL)                        AfCycDesign (AF2)
+                                                      Ground Truth         WGFormer (GDL)                    HighFold2 (AF2)
+
+
+Figure 4 . (a) Secondary Structural Diversity (HSS ) across different test sets; MuCO maintains superior ensemble
+diversity compared to all baselines. (b) Secondary structure composition (Helix, Sheet, and Coil) on the CPSea-PDB
+dataset. MuCO significantly improves the recovery of regular secondary structures.
+
+
+
+
+Figure 5 . Case study on structural fidelity. Visual comparison of predicted conformations for a representative sample
+from the CPSea PDB dataset. Under single sampling, MuCO reconstructs the native-like α-helical motif and achieves
+significantly lower potential energy (E) compared to representative baselines.
+
+
+
+
+                                                                                               9
+4.3    Analysis of Sampling Strategy
+Efficiency of Hierarchical Exploration. Beyond the single sampling mode, MuCO can accelerate the
+exploration of the cyclic conformation space by the proposed hierarchical parallel sampling strategy. In
+Figure 6, we analyze the impact of increasing the sampling budget (K Backbone states × M Side-chain
+states). We observe a significant improvement in effectiveness: increasing the sampling budget drastically
+improves the cyclization mode coverage and achieves a success rate of 100%. Higher sampling density
+allows MuCO to discover more feasible cyclization modes given the same sequence (e.g. > 90% coverage
+for both H2T and K2DE), a capability completely absent in deterministic prediction models like HighFold2.
+
+
+                                    101
+                                          (a) Success Rate (%)                                  (b) Mode Coverage on CPCore
+                                                                                                                                        H2T Coverage
+                                    100                                                                                                 K2DE Coverage
+                                                                                                100                                     C2C Coverage
+                                     99
+                                                                                                 80
+                                     98
+                 Success Rate (%)
+
+
+
+
+                                                                               Percentage (%)
+                                     97
+                                                                                                 60
+                                     96
+                                     95                                                          40
+
+                                     94
+                                                                                                 20
+                                     93
+                                     92                                                           0
+                                      CPCore                       CPSea PDB                          GT    HF2 MuCO MuCO MuCO
+                                                                                                                 1x1 5x5 10x10
+
+                                                    Ground Truth          MuCO (1x1)                       MuCO (5x5)    MuCO (10x10)
+                                                    HighFold2             MuCO (1x10)                      MuCO (10x1)
+
+
+Figure 6 . (a) Success rate as a function of the number of backbone (K) and side-chain (M ) samples. (b) Cyclization
+mode coverage (H2T and K2DE) on the CPCore dataset. Increasing sampling density allows MuCO to discover feasible
+cyclization modes.
+
+In particular, in a sample budget of 10 × 10, MuCO achieves a mean energy of -3.9 kJ/mol in CPCore and
+-247.6 kJ/mol in CPSea PDB, which surpasses the stability of Ground Truth conformations as shown in
+Figure 7. In addition, the amortized sampling time per conformation is reduced to the millisecond scale
+(≈ 41ms) as shown in Table 2, detailed sampling strategies and results are provided in Appendix E.
+
+Table 2 . Comparison of model complexity and inference efficiency. MuCO (Parallel) achieves the lowest amortized
+latency per sample (K × M = 100) while maintaining a significantly smaller parameter footprint than folding-based
+methods.
+
+
+                            Method                                      Trainable Params ↓                               Amortized Time ↓
+                            AfCycDesign                                                         92.3M                            4236ms
+                            HighFold2                                                           92.3M                            4512ms
+                            WGFormer                                                            78.8M                             103ms
+                            EGNN                                                                1.5M                               72ms
+                            MuCO (Parallel)                                                     40.2M                             41ms
+
+                 Note: Amortized time for MuCO is measured over 100 parallel samples. Our method is
+                 ∼1.7× faster than the lightweight EGNN and > 100× faster than folding-based baselines.
+
+
+
+
+                                                                                                  10
+                                                          (a) CPCore Energy Sampling                                                                     (b) CPSea PDB Energy Sampling
+                                 10                                                                                                        10                                                                         126
+                                                                                                              90
+                                                                                                                                                                                                                      144
+                                                                                                              75
+                                                                                                                                                                                                                      162
+
+
+
+
+                                                                                                                  Mean Energy (kJ/mol)
+
+
+
+
+                                                                                                                                                                                                                        Mean Energy (kJ/mol)
+           Stage 2 Samples (M)
+                                                                                                              60
+                                                                                                                                                                                                                      180
+                                                                                                              45
+                                   5                                                                                                           5                                                                      198
+                                                                                                              30
+                                                                                                                                                                                                                      216
+
+
+
+
+                                                                                                                                                       GT:
+                                                                                                              15
+
+
+
+
+                                                                                                                                                        -184
+                                                          GT                                                                                                                                                          234
+
+
+
+
+                                                                                                                                                         .0
+                                                            :4                                                0
+                                                              8.4
+                                   1                                                                                                           1                                                                      252
+                                        1                                 5                         10                                             1                      5                              10
+                                                                    Stage 1 Samples (K)                                                                            Stage 1 Samples (K)
+
+Figure 7 . The heatmaps display the mean potential energy for (a) CPCore and (b) CPSea PDB as a function of Stage-1
+(backbone generation) and Stage-2 (side-chain packing) sample sizes. MuCO is capable of identifying metastable states
+with energies comparable to or lower than the ground truth through two stages of efficient parallel sampling.
+
+
+4.4    Ablation Studies
+Necessity of Generative Modeling. We validate our multi-stage generative modeling strategy in Figure 8. In
+particular, replacing the flow-based backbone generator of Stage-1 with an EGNN leads to a significant drop
+in success rate and diversity, confirming that the flow matching is essential to generate valid cyclic topologies.
+Similarly, replacing the flow-based side-chain packing module of Stage-2 with an EGNN results in higher
+energies, indicating that deterministic packing cannot resolve the dense steric constraints of macro-cycles as
+well as the generative method does. These results demonstrate the rationality of our model design.
+
+                                                                 (a) Success Rate (%)                                                                          (b) Mean Energy
+                                                  100                                                                                    100
+                                 Percentage (%)
+
+
+
+
+                                                    90
+                                                                                                              kJ/mol
+
+
+
+
+                                                                                                                                           0
+
+                                                    80                                                                                   100
+
+
+                                                    70                                                                                   200
+                                                     CPTrans            CPBind        CPCore     CPSea PDB                                 CPTrans               CPBind         CPCore       CPSea PDB
+                                                           (c) Secondary Structure (H)                                                             (d) SS Dist. (%) on CPSea PDB
+                                                                                                                                         100                                                        Structures
+                                                    1.0
+                                                                                                                                                                                                              Helix
+                                  Shannon Entropy
+
+
+
+
+                                                                                                                                          80
+                                                                                                                  Percentage (%)
+
+
+
+
+                                                                                                                                                                                                              Sheet
+                                                    0.8                                                                                                                                                       Coil
+                                                                                                                                          60
+                                                    0.6
+                                                                                                                                          40
+                                                    0.4                                                                                   20
+
+                                                    0.2                                                                                    0
+                                                      CPTrans           CPBind        CPCore     CPSea PDB                                              GT       EGNN S1 EGNN S2             MuCO
+                                                                        MuCO (Ours)            EGNN Stage 1                                    EGNN Stage 2                   Ground Truth
+
+
+Figure 8 . Comparison between the full MuCO model and the variants with EGNN-based deterministic Stage-1 or
+Stage-2. (a-b) Success rate and mean energy; (c-d) Secondary structure diversity and distribution.
+
+Necessity of Physics-Aware Optimization. Figure 9 provides a deep dive into the role of Stage-3. An
+intriguing finding is that the raw MuCO output (w/o Opt) is dominated by random coils (Helix ≈ 0%),
+representing a poorly regulated but topologically valid potential well. Stage-3 acts as a potent folding driver,
+
+                                                                                                                                 11
+condensing these coils into well-defined helices and sheets. In contrast, HighFold2 shows minimal change
+after optimization, suggesting that its predictions are rigid and trapped in high-energy local minima. This result
+reveals that MuCO’s generative stages effectively seed the correct potential well, allowing physics-based
+optimization to efficiently descend into low-energy states corresponding to valid conformations.
+
+                        (a) Structural Diversity (H) Recovery                              (b)
+                                                                                            35
+                                                                                               -Helix Content Recovery (%)
+
+                                   1.0                                                           30
+
+                                   0.8                                                           25
+                 Shannon Entropy
+
+
+
+
+                                                                                Percentage (%)
+                                                                                                 20
+                                   0.6
+                                                                                                 15
+                                   0.4
+                                                                                                 10
+
+                                   0.2                                                            5
+
+                                   0.0                                                            0
+                                     CPTrans   CPBind      CPCore   CPSea PDB                     CPTrans   CPBind    CPCore    CPSea PDB
+                                                   Dataset                                                      Dataset
+                                                 Ground Truth           MuCO (Ours)                           MuCO (w/o Opt.)
+                                                 HighFold2 (Full)       HighFold2 (w/o Opt.)
+
+
+Figure 9 . (a) Recovery of structural diversity (HSS ) before and after optimization. (b) Comparison of α-helix content
+recovery against Ground Truth and baselines. Stage-3 refines stochastically sampled coordinates around potential wells
+into physically realizable local minima and well-defined secondary structural motifs.
+
+5    Conclusion and Future Work
+In this work, we introduced MuCO, a multi-stage conformation optimization framework for generative
+peptide cyclization. Our method overcomes the mode collapse of existing methods by combining generative
+modeling with physics-aware optimization. Using an efficient hierarchical sampling strategy, MuCO explores
+the rugged energy landscape of cyclic peptides more effectively than deterministic prediction, achieving
+superior physical stability and structural diversity. By bridging the gap between static conformation prediction
+and dynamic physical reality, MuCO provides a computational tool for exploring the conformational space of
+macrocycles, potentially accelerating the design of peptide therapeutics.
+Limitations and Future Work. Technically, our method focuses on monomeric peptides with terminal
+based cyclizations, and its backbone folding efficiency degrades in ultra-long sequences. In addition, from a
+practical drug discovery perspective, current evaluations still lack comprehensive metrics on pharmaceutical
+properties and synthesibility. Therefore, future work will aim to design more physically meaningful model
+architectures and extend MuCO to multi-chain complexes and more diverse data sources. We are planning to
+collaborate with biologists on wet-lab verification and data annotation, paving the way for broader and more
+practical applications in drug design.
+
+
+References
+Josh Abramson, Jonas Adler, Jack Dunger, Richard Evans, Tim Green, Alexander Pritzel, Olaf Ronneberger, et al.
+  Accurate structure prediction of biomolecular interactions with AlphaFold 3. Nature, 630(8016):493–500, 2024.
+Avishek Joey Bose, Tara Akhound-Sadegh, Guillaume Huguet, Kilian Fatras, Jarrid Rector-Brooks, Cheng-Hao Liu,
+  Andrei Cristian Nica, Maksym Korablyov, Michael Bronstein, and Alexander Tong. SE(3)-stochastic flow matching
+  for protein backbone generation. In The Twelfth International Conference on Learning Representations, 2024.
+
+
+                                                                             12
+Chai Discovery team, Jacques Boitreaud, Jack Dent, Matthew McPartlon, Joshua Meier, Vinicius Reis, Alex Ro-
+  gozhonikov, and Kevin Wu. Chai-1: Decoding the molecular interactions of life. bioRxiv, pages 2024–10, 2024.
+Ricky T. Q. Chen and Yaron Lipman. Flow matching on general geometries. In 12th International Conference on
+  Learning Representations (ICLR), 2024.
+Ruslan L. Davidchack, Richard Handel, and M. V. Tretyakov. Langevin thermostat for rigid body dynamics. The
+  Journal of Chemical Physics, 130(23), 2009.
+P. G. Dougherty, A. Sahni, and D. Pei. Understanding cell penetration of cyclic peptides. Chemical Reviews, 119(17):
+   10241–10287, 2019.
+S. A. Hollingsworth and R. O. Dror. Molecular dynamics simulation for all. Neuron, 99(6):1129–1143, 2018.
+Jing Huang and Alexander D. MacKerell Jr. CHARMM36 all-atom additive protein force field: Validation based on
+   comparison to NMR data. Journal of Computational Chemistry, 34(25):2135–2145, 2013.
+Guillaume Huguet, James Vuckovic, Kilian Fatras, Eric Thibodeau-Laufer, Pablo Lemos, Riashat Islam, Chenghao
+  Liu, et al. Sequence-augmented SE(3)-flow matching for conditional protein generation. In Advances in Neural
+ Information Processing Systems, volume 37, pages 33007–33036, 2024.
+X. Ji, A. L. Nielsen, and C. Heinis. Cyclic peptides for drug development. Angewandte Chemie, 136(3):e202308251,
+  2024.
+Dapeng Jiang, Xiangzhe Kong, Jiaqi Han, Mingyu Li, Rui Jiao, Wenbing Huang, Stefano Ermon, Jianzhu Ma, and Yang
+  Liu. Zero-shot cyclic peptide design via composable geometric constraints. arXiv preprint arXiv:2507.04225, 2025.
+X. Jing and K. Jin. A gold mine for drug discovery: Strategies to develop cyclic peptides into therapies. Medicinal
+  Research Reviews, 40(2):753–810, 2020.
+John Jumper, Richard Evans, Alexander Pritzel, Tim Green, Michael Figurnov, Olaf Ronneberger, Kathryn Tun-
+  yasuvunakool, et al. Highly accurate protein structure prediction with AlphaFold. Nature, 596(7873):583–589,
+  2021.
+A. C.-L. Lee, J. L. Harris, K. K. Khanna, and J.-H. Hong. A comprehensive review on current advances in peptide drug
+  development and design. International Journal of Molecular Sciences, 20(10):2383, 2019.
+Jin Sub Lee and Philip M. Kim. FlowPacker: Protein side-chain packing with torsional flow matching. Bioinformatics,
+   41(3):btaf010, 2025.
+Yi-Lun Liao, Brandon M. Wood, Abhishek Das, and Tess Smidt. EquiformerV2: Improved equivariant transformer for
+  scaling to higher-degree representations. In The Twelfth International Conference on Learning Representations, 2024.
+Zeming Lin, Halil Akin, Roshan Rao, Brian Hie, Zhongkai Zhu, Wenting Lu, Allan dos Santos Costa, et al. Language
+  models of protein sequences at the scale of evolution enable accurate structure prediction. bioRxiv, 2022:500902,
+  2022.
+M. Mannes, C. Martin, C. Menet, and S. Ballet. Wandering beyond small molecules: Peptides as allosteric protein
+ modulators. Trends in Pharmacological Sciences, 43(5):406–423, 2022.
+Saro Passaro, Gabriele Corso, Jeremy Wohlwend, Mateo Reveiz, Stephan Thaler, Vignesh Ram Somnath, Noah Getz,
+  et al. Boltz-2: Towards accurate and efficient binding affinity prediction. bioRxiv, 2025.
+Elke Persch, Oliver Dumele, and Francois Diederich. Molecular recognition in chemical and biological systems.
+  Angewandte Chemie International Edition, 54(11):3290–3327, 2015.
+P. Pracht, F. Bohle, and S. Grimme. Automated exploration of the low-energy chemical space with fast quantum
+   chemical methods. Physical Chemistry Chemical Physics, 22(14):7169–7192, 2020.
+Stephen A. Rettie, Katelyn V. Campbell, Asim K. Bera, Alex Kang, Simon Kozlov, Yensi Flores Bueso, Joshmyn De La
+  Cruz, et al. Cyclic peptide structure prediction and design using AlphaFold2. Nature Communications, 16(1):4730,
+  2025.
+Víctor Garcia Satorras, Emiel Hoogeboom, and Max Welling. E(n) equivariant graph neural networks. In International
+  Conference on Machine Learning, pages 9323–9332. PMLR, 2021.
+
+
+                                                         13
+Tamar Schlick, Stephanie Portillo-Ledesma, Christopher G. Myers, Lauren Beljak, Justin Chen, Sami Dakhel, Daniel
+  Darling, et al. Biomolecular modeling and simulation: A prospering multidisciplinary field. Annual Review of
+  Biophysics, 50(1):267–301, 2021.
+Ashok Sekhar and Lewis E. Kay. NMR paves the way for atomic level descriptions of sparsely populated, transiently
+  formed biomolecular conformers. Proceedings of the National Academy of Sciences, 110(32):12867–12874, 2013.
+Q. Song, Z. Cheng, M. Kariuki, S. C. L. Hall, S. K. Hill, J. Y. Rho, and S. Perrier. Molecular self-assembly and
+  supramolecular chemistry of cyclic peptides. Chemical Reviews, 121(22):13936–13995, 2021.
+Gian Marco Visani, William Galvin, Michael Pun, and Armita Nourmohammad. H-Packer: Holographic rotationally
+  equivariant convolutional neural network for protein side-chain packing. In Machine Learning in Computational
+  Biology, pages 230–249. PMLR, 2024.
+Fanmeng Wang, Minjie Cheng, and Hongteng Xu. WGFormer: An SE(3)-transformer driven by Wasserstein gradient
+  flows for molecular ground-state conformation prediction. In 42nd International Conference on Machine Learning
+  (ICML), 2025a.
+Yuyang Wang, Jiarui Lu, Navdeep Jaitly, Josh Susskind, and Miguel Angel Bautista. Simplefold: Folding proteins is
+  simpler than you think. arXiv preprint arXiv:2509.18480, 2025b.
+Jeremy Wohlwend, Gabriele Corso, Saro Passaro, Noah Getz, Mateo Reveiz, Ken Leidal, Wojtek Swiderski, et al.
+  Boltz-1: Democratizing biomolecular interaction modeling. bioRxiv, pages 2024–11, 2025.
+Ziyi Yang, Hanyuan Xie, Yinjun Jia, Xiangzhe Kong, Jiqing Zheng, Ziting Zhang, Yang Liu, Lei Liu, and Yanyan Lan.
+  CPSea: Large-scale cyclic peptide-protein complex dataset for machine learning in cyclic peptide design. In The
+  Thirty-ninth Annual Conference on Neural Information Processing Systems Datasets and Benchmarks Track, 2025.
+Jason Yim, Andrew Campbell, Andrew Y. K. Foong, Michael Gastegger, José Jiménez-Luna, Sarah Lewis, Victor Garcia
+  Satorras, et al. Fast protein backbone generation with SE(3) flow matching. arXiv preprint arXiv:2310.05297, 2023a.
+Jason Yim, Brian L. Trippe, Valentin De Bortoli, Emile Mathieu, Arnaud Doucet, Regina Barzilay, and Tommi S.
+  Jaakkola. SE(3) diffusion model with application to protein backbone generation. In 40th International Conference
+  on Machine Learning (ICML), 2023b.
+Angxiao Yue, Zichong Wang, and Hongteng Xu. ReQFlow: Rectified quaternion flow for efficient and high-quality
+  protein backbone generation. 2025.
+Chengyun Zhang, Wentong Wang, Ning Zhu, Zhigang Cao, Yaling Wu, Qingyi Mao, Cheng Zhu, Chenhao Zhang,
+  Jingjing Guo, and Hongliang Duan. AlphaFold3 for noncanonical cyclic peptide modeling: Hierarchical benchmarking
+  reveals accuracy and practical guidelines. Journal of Chemical Information and Modeling, 65(18):9777–9789, 2025.
+Yangtian Zhang, Zuobai Zhang, Bozitao Zhong, Sanchit Misra, and Jian Tang. DiffPack: A torsional diffusion model
+  for autoregressive protein side-chain packing. In Advances in Neural Information Processing Systems, volume 36,
+  pages 48150–48172, 2023.
+Cheng Zhu, Sen Cao, Tianfeng Shang, Jingjing Guo, An Su, Chengxi Li, and Hongliang Duan. Predicting the structures
+  of cyclic peptides containing unnatural amino acids by HighFold2. Briefings in Bioinformatics, 26(3):bbaf202, 2025.
+A. Zorzi, K. Deyle, and C. Heinis. Cyclic peptide therapeutics: Past, present and future. Current Opinion in Chemical
+  Biology, 38:24–29, 2017.
+
+
+
+
+                                                         14
+A       Training Details
+A.1     Training Protocols and Hyperparameters
+A.1.1    Stage-1: Backbone Flow Matching
+The backbone generation module is built on the FoldFlow-2 architecture (Huguet et al., 2024), employing
+a tripartite structure of an encoder, a multi-modal fusion trunk, and a geometric decoder. Each component
+is stacked with 2 blocks of Invariant Point Attention (IPA) or transformer layers. To integrate sequence
+information, we utilize a frozen ESM2-650M model, projecting its output into 128-dimensional sequential
+and 128-dimensional pair representations. In the subsequent combiner module, these are fused into a joint
+latent space with sequential and pair dimensions of 128 and 64. The model operates on the SE(3) manifold
+with a coordinate scaling factor of 0.1 to normalize the translational variance.
+The training objective Lbackbone is a multi-task composite loss that penalizes errors in flow prediction and
+structural geometry. We define total loss as a weighted sum of five components:
+
+                       Lbackbone = Ltrans + 0.5Lrot + Lbb_atom + Ldist_mat + 0.25Laux ,                      (5)
+
+where Ltrans and Lrot are flow matching losses for the translational and rotational components. To ensure
+local and global structural consistency, we introduce backbone atom loss Lbb_atom and distance matrix loss
+Ldist_mat , both of which are activated for diffusion times t > 0.25. Finally, an auxiliary loss Laux is used to
+penalize deviations in bond lengths and angles, ensuring that the generated scaffolds are physically reliable
+before entering the packing stage.
+
+A.1.2    Stage-2: Side-chain Flow Matching
+The side-chain packing module leverages the EquiformerV2 architecture to model cyclic macrocycles (Liao
+et al., 2024; Lee and Kim, 2025). The network consists of 4 equivariant layers with 256 sphere channels
+and 256 edge channels. We set the maximum degree of spherical harmonics at Lmax = 3 and the azimuthal
+quantum number at Mmax = 1. The attention mechanism is configured with 8 heads and a hidden dimension
+of 64. The input node features (95-dim) include one-hot amino acid identities and backbone torsion angles
+(ψ, τ, ω ), while the edge features (261-dim) combine E(3)-invariant geometric features with our proposed
+cyclic relative positional encodings to account for the ring-closed topology.
+The model is trained using a Torsional Flow Matching objective on the hypertorus T4L . The training loss is
+defined as:
+                       Lpacking = Et,χ1 ,χt w(t)∥vτC (χt , t, B, S) − uCt (χt | χ1 )∥2 ,
+                                                                                     
+                                                                                                        (6)
+where w(t) = (1 − t)−2 is a weighting factor that prioritizes precision as the trajectory approaches the clean
+data state (t → 1). We adopt the velocity field formulation to optimize the flow. For residues with inherent
+π -symmetry, such as Phenylalanine or Tyrosine, the loss is computed using a mod π operation on the torsion
+angles to prevent the model from being penalized for predicting symmetry-equivalent rotameric states.
+
+A.2     Hardware and Other Training Details
+All models were trained on four NVIDIA RTX 4090 GPUs (24GB VRAM each) and an Intel(R) Xeon(R)
+Gold 6348 CPU (112 logic cores, 2.60GHz). For Stage-1 (Backbone), each GPU consumed approximately
+16GB of VRAM. Due to the requirement of high-throughput data loading for large-scale backbone ensembles,
+the CPU utilization remained near maximum capacity during this stage. Stage-2 (Side-chain) was more
+memory-efficient, utilizing roughly 12GB of VRAM per GPU. Both stages were implemented in PyTorch
+and optimized using the AdamW optimizer.
+We utilized the CPSea dataset as our data source and partitioned it into training set and validation set. During
+the training process, we observed that the backbone flow matching module converged with relative stability,
+
+                                                      15
+but the side-chain packing module fluctuates severely, likely due to the highly constrained and rugged energy
+landscape of dense macrocycles.
+For training configurations. In Stage-1: the model was trained for 100 epochs with a learning rate of 2 × 10−4
+and a total batch size of 256. Each epoch took approximately 12 minutes to complete, totaling roughly 20
+hours of training time. In Stage-2: we set the learning rate at 1 × 10−4 and the batch size at 128. This stage
+was also trained for 100 epochs, each epoch taking approximately 8 minutes, resulting in a total training
+duration of approximately 13 hours. We utilized an exponential moving average (EMA) with a decay rate of
+0.999 to stabilize the training dynamics. To ensure the robustness of the flow matching, a velocity field loss
+was adopted with a tolerance ϵ = 2 × 10−4 during training.
+In particular, in our baselines, EGNN and WGFormer were trained on CPSea using the corresponding linear
+peptide conformations as structural priors. Conversely, for AF2-based models, we utilized their pre-trained
+weights without further fine-tuning. This is justified by the fact that the CPSea dataset (excluding the PDB
+subset) is largely derived from AF2 predictions; thus, these models can be considered to have prior exposure
+to the underlying data distribution.
+
+A.3    Algorithm
+We present the training procedure for our decoupled flow matching modules in Algorithm 1.
+
+Algorithm 1 Training of MuCO Decoupled Flow Modules
+ 1: Input: Dataset D = {(S, X)} (Sequences S and Conformations X )
+ 2: Parameters: Backbone Flow Network vθB , Side-chain Flow Network vτC
+ 3: Hyperparameters: Time distribution p(t) = U[0, 1]
+ 4: while not converged do
+ 5:   Sample batch (S, X) ∼ D
+ 6:   Decompose X into Backbone frames B1 and Side-chain torsions C1
+ 7:   // — Stage-1: Backbone Flow Matching Training —
+ 8:   Sample time t ∼ p(t)
+ 9:   Sample prior B0 ∼ pB                    3
+                          prior {Gaussian on R , Isotropic on SO(3)}
+10:   Compute geodesic path Bt between B0 and B1 on (SE(3) × T)L
+11:   Compute target vector field uBt (Bt | B1 )
+12:   Lbackbone ← Ltrans + 0.5Lrot + Lbb_atom + Ldist_mat + 0.25Laux
+13:   Update θ by minimizing Lbackbone
+14:   // — Stage-2: Side-chain Flow Training —
+15:   Sample time t ∼ p(t)
+16:   Sample prior C0 ∼ U(T4L ) {Uniform on Torus}
+17:   Compute geodesic path Ct between C0 and C1 on T4L
+                                    C
+18:                        field Cut (Ct | C1 )
+      Compute target vector
+      Lpacking ← Et,χ1 ,χt w(t)∥vτ (χt , t, B, S) − uCt (χt | χ1 )∥2
+                                                                     
+19:
+20:   Update τ by minimizing Lpacking
+21: end while
+
+
+
+
+                                                     16
+B     Rule-based Topology Detection and Physics Refinement
+To bridge the gap between the probabilistic samples generated by flow matching stages and the particular
+physical constraints required for downstream applications, we implemented an automated rule-based topology
+detection and refinement strategy. This strategy ensures that the generated conformations strictly adhere to
+specific chemical bonding criteria and facilitates energy minimization to find potential wells automatically.
+
+B.1    Implicit Constraint Subspaces
+We define the associated implicit constraint subspaces ΩC for the three most prevalent cyclization strategies
+in the CPSea dataset. Let xi,atom denote the Cartesian coordinates of a specific atom in residue i. We define
+the target equilibrium peptide bond length as dpep = 1.33 Å and the disulfide bond length as dSS = 2.05 Å.
+A tolerance δ = 0.1 Å is applied to verify successful closure.
+Head-to-Tail Cyclization (ΩH2T ): Closure is achieved by forming a peptide bond between the N-terminus of
+the first residue (i = 1) and the C-terminus of the last residue (i = L):
+
+                               ΩH2T = {X | ∥x1,N − xL,C ∥2 ∈ [dpep − δ, dpep + δ]} .                         (7)
+
+                       (i,j)
+Disulfide Bridging (ΩSS ): A covalent bond forms between the sulfur atoms (Sγ ) of two cysteine residues at
+positions i and j :
+                                        ∥xi,Sγ − xj,Sγ ∥2 ∈ [dSS − δ, dSS + δ],
+                                                                               
+                          (i,j)
+                        ΩSS = X                                                                         (8)
+                                        where si = Cys, sj = Cys.
+
+                                       (i,j)
+Side-chain Isopeptide Linkage (ΩIso ): An amide bond forms between a Lys side-chain amine (Nζ ) and an
+Asp/Glu side-chain carboxylate (Cγ for Asp or Cδ for Glu):
+                                (                                                     )
+                         (i,j)         ∥xi,N ζ − x
+                                                   j,Cδ/γ ∥2 ∈ [dpep − δ, d pep + δ],
+                       ΩIso = X                                                                    (9)
+                                       where si = Lys, sj ∈ {Asp, Glu}.
+
+B.2    Topology Inference and Force Field Optimization
+Prioritized Inference Logic: Since the cyclization mode is not explicitly labeled during inference, we adopt
+a priority-based detection strategy. The algorithm first identifies all Cys-Cys pairs; if the distance between
+any pair’s Sγ -Sγ is less than 2.5 Å, it is assigned as a disulfide bridge. If no such pair exists but potential
+isopeptide residues (Lys, Asp/Glu) are present, we compare the current distance of the closest isopeptide pair
+with the head-to-tail distance, selecting the shorter of the two. In all other cases, the peptide is treated as
+head-to-tail cyclic.
+Force Field Patching: We utilize the CHARMM36 force field (Huang and Jr., 2013) for local geometry
+refinement. Standard residue templates are insufficient for cyclic bonds because of atom loss. We implemented
+custom patches to handle these transitions: the Cys template removes sulfur hydrogen (HG); the Lys template
+removes two hydrogens from the Nζ amine; the Asp/Glu templates remove the hydroxyl group (OH) from
+the side-chain carboxylate; and the backbone H2T mode performs standard dehydration.
+Validation and Success Criteria: After 500 steps of Steepest Descent (SD) minimization, we perform a
+final geometric check. A conformation is only considered valid if its minimized bond length dfinal satisfies
+|dfinal − dtarget | ≤ δ . Samples that fail this physics-based threshold are discarded. Given that our datasets
+focus on single-mode cyclization, this automated heuristic effectively resolves most of the cases.
+
+
+
+
+                                                        17
+B.3    Algorithm
+
+Algorithm 2 Rule-based Topology Detection and Physics Refinement
+ 1: Input: Raw coordinates X  f, Sequence S , Targets dpep , dSS , Tolerance δ
+ 2: Output: Refined coordinates X or Failure
+ 3: Identify reactive pairs P ← {(i, j) | Cys-Cys, Lys-Asp/Glu, 1-L}
+ 4: if ∃(i, j) ∈ Cys-Cys and ∥xi,Sγ − xj,Sγ ∥2 < 2.5Å then
+                  (i,j)
+ 5:   Mode ← ΩSS
+ 6: else if ∃(i, j) ∈ Isopeptide candidates then
+                                                   (i,j)
+ 7:    Mode ← (∥Iso-pair∥2 < ∥H2T-pair∥2 )?ΩIso : ΩH2T
+ 8: else
+ 9:    Mode ← ΩH2T
+10: end if
+                                                               f→ X
+11: Apply CHARMM36 patches (remove leaving atoms) and minimize X
+12: if |dfinal − dtarget | ≤ δ then
+13:    return X
+14: else
+15:    return Failure
+16: end if
+
+
+
+
+                                                           18
+C     Dataset and Data Processing
+To ensure MuCO learns from high-quality and structurally representative cyclic peptides, we curated a
+large-scale dataset derived from the CPSea repository (Yang et al., 2025). This section details our filtering
+criteria and the statistical characteristics of the resulting subsets.
+
+C.1    Filtering Pipeline
+Our filtering process is designed to isolate peptides where the macro-cyclic constraint is the primary deter-
+minant of the conformational landscape. First, we select peptides with lengths L ∈ [8, 16], a range that is
+most critical for therapeutic applications. Second, we introduce a Backbone Mass Ratio filter (referred to
+as Residue Summary). We calculate the relative molecular mass of the cyclic backbone and ensure that it
+exceeds 20% of the total molecular weight (ResSum) in the multi-chain conformation. This ensures that the
+training conformations are not biased by external chain environments, preserving intrinsic low-energy states
+that authentically reflect the geometric influence of the ring-closure.
+
+C.2    Dataset Subsets and Topology
+As illustrated in Figure 10, we partition the filtered CPSea dataset into five disjoint subsets based on their
+functional annotations and data sources: CPSea: The full set of filtered cyclic peptides (∼75k samples,
+Training set). CPBind: Peptides with high binding affinity. CPTrans: Cell-penetrating peptides. CPCore:
+The intersection of CPBind and CPTrans, representing the most biologically relevant core. CPSea PDB: A
+gold-standard subset consisting of high-resolution structures directly sourced from the Protein Data Bank
+(PDB).
+
+
+                                              CPSea
+
+
+
+                                  CPBind         CPCore           CPTrans
+
+
+
+
+                                                CPSea-Train                 CPSea
+                                       (neither CPBind nor CPTrans)          PDB
+
+
+
+Figure 10 . Venn diagram illustrating the relationships between different CPSea subsets. CPSea PDB serves as an
+external high-confidence validation set.
+C.3    Data Statistics and Distributions
+We provide a comprehensive statistical summary of the sequence and structural features across all subsets in
+Table 3. The distributions are further visualized in Figure 11.
+Sequence Characteristics. The sequence length distribution across all subsets is negatively skewed (Skew-
+ness ≈ −1.3), with a heavy concentration at L = 16 (see Figure 11, left). The mean length ranges from
+14.2 to 15.2. The Residue Summary (Backbone Mass Ratio) KDE plots (Figure 11, middle) show a sharp,
+unimodal peak at approximately 0.22 with extremely low variance (Std < 0.03), indicating high structural
+homogeneity across the filtered dataset.
+
+
+                                                           19
+Cyclization Modes. As shown in the Ring Info distribution (Figure 11, right), the dataset covers three
+main cyclization strategies: Stapled (Isopeptide, K-to-DE), Disulfide (Cys-to-Cys), and Head-to-tail. The
+stapled peptides are the most numerous in the total CPSea set, and the frequency of Stapled configurations is
+particularly high in the CPCore and CPSea PDB subsets (exceeding 80%). This highlights the importance
+of side-chain cross-linking in high-confidence cyclic structures. Despite the vast difference in sample sizes
+(ranging from 85 in CPSea PDB to more than 75,000 in CPSea) and their functions, the frequency trends
+remain remarkably consistent across all subsets.
+
+                 Table 3 . Descriptive statistics of sequence length (L) and backbone mass ratio (ResSum) for CPSea subsets.
+
+                      Category               Dataset                   Count                                     Mean L              Skew (L)               Mean ResSum                                 Skew (ResSum)
+                       Training              CPSea (Train)             75,337                                      14.99                 -1.28                       0.2327                                        1.56
+                                             CPTrans                     6,590                                     14.23                 -0.66                       0.2300                                        1.68
+                                             CPBind                      3,194                                     15.05                 -1.52                       0.2289                                        1.68
+                        Testing
+                                             CPCore                       263                                      14.40                 -0.80                       0.2273                                        1.59
+                                             CPSea PDB                     85                                      15.25                 -1.75                       0.2228                                        0.98
+
+
+                             Seq Length Distribution by Count                                1e6 Residue Summary Distribution (Count-scale KDE)                                                       Ring Info Distribution by Count
+                      CPSea_PDB                                                                                                           CPSea_PDB                                                                                       CPSea_PDB
+                      CPCore                                                            1.75                                              CPCore                                                                                          CPCore
+        30000         CPSea                                                                                                               CPSea                             40000                                                         CPSea
+                      CPBind                                                            1.50                                              CPBind                                                                                          CPBind
+        25000         CPTrans                                                                                                             CPTrans                                                                                         CPTrans
+                                                                                        1.25                                                                                30000
+        20000
+                                                                       Count (KDE)
+
+
+
+
+                                                                                        1.00
+Count
+
+
+
+
+                                                                                                                                                                    Count
+        15000                                                                                                                                                               20000
+                                                                                        0.75
+        10000                                                                           0.50
+                                                                                                                                                                            10000
+         5000                                                                           0.25
+
+                 0                                                                      0.00                                                                                         0
+                       8           10          12         14      16                                     0.20   0.25   0.30    0.35     0.40  0.45   0.50    0.55                         Stapled                disulfide                   head-to-tail
+                                        Seq Length                                                                            Residue Summary                                                                    Ring Info
+                           Seq Length Distribution by Frequency                                           Residue Summary Distribution (Probability Density KDE)                                    Ring Info Distribution by Frequency
+                      CPSea_PDB                                                                                                                        CPSea_PDB                                                                          CPSea_PDB
+                0.5   CPCore                                                                        25                                                 CPCore                       0.8                                                   CPCore
+                      CPSea                                                                                                                            CPSea                                                                              CPSea
+                      CPBind                                                                                                                           CPBind                                                                             CPBind
+                0.4   CPTrans                                                                       20                                                 CPTrans                                                                            CPTrans
+                                                                                                                                                                                    0.6
+                                                                            Density (probability)
+
+
+
+
+                0.3                                                                                 15
+    Frequency
+
+
+
+
+                                                                                                                                                                        Frequency
+
+
+
+
+                                                                                                                                                                                    0.4
+                0.2                                                                                 10
+
+
+                0.1                                                                                 5                                                                               0.2
+
+
+                0.0                                                                                 0                                                                               0.0
+                       8           10          12         14      16                                     0.20   0.25   0.30    0.35     0.40  0.45   0.50    0.55                         Stapled                disulfide                   head-to-tail
+                                        Seq Length                                                                            Residue Summary                                                                    Ring Info
+
+
+Figure 11 . Distributions of sequence length, backbone mass ratio (Residue Summary), and cyclization modes across
+the five subsets. Top row shows absolute counts; bottom row shows normalized frequencies.
+
+
+
+
+                                                                                                                               20
+D     Detailed Evaluation Metrics
+This section describes the metrics used to assess the generative quality of MuCO. To ensure an equitable
+comparison, we implement a unified evaluation protocol: all candidate structures, including MuCO
+generations, baseline predictions, and the original Ground Truth (GT) samples, are processed through the
+identical force-field optimization pipeline described in Appendix B before any metrics are calculated.
+
+D.1    Structural Diversity via Shannon Entropy
+We employ Shannon Entropy (H ) to evaluate the distributional diversity of the model in single-sampling
+mode. This metric assesses whether the model’s learned probability density accurately covers the diverse
+conformational and topological landscape of cyclic peptides rather than collapsing into a single mode. For a
+categorical distribution across n states (such as cyclization modes or secondary structure types), the entropy
+is calculated as H = − ni=1 pi ln pi , where pi is the frequency of state i across the test set. We specifically
+                         P
+report HC to measure the balance between H2T, Disulfide, and Isopeptide modes, and HSS to measure the
+mixture of helical, sheet, and coil motifs.
+
+D.2    Physical Stability and Success Rate
+The physical validity of the ensembles is quantified by the Success Rate (SR) and the Mean Potential Energy
+(E ). The SR is defined as the percentage of structures that satisfy the geometric closure tolerance δ (as defined
+in Appendix B) after the minimization process, with the additional requirement that the final potential energy
+must remain below 103 kJ/mol. Conformations exceeding this energy threshold are manually categorized as
+cyclization failures, as visual inspection reveals that such high-energy states are typically accompanied by
+severe side-chain steric clashes and would be physically unstable in nature. Under this rigorous standard, even
+structures in unfiltered CPSea datasets may fail to cyclize because some experimental conformations may not
+strictly satisfy the specified covalent bond thresholds or force-field equilibrium under the given parameters.
+The E represents the average potential energy (kJ/mol) calculated using the Charmm36 force field. By
+minimizing all structures including baselines and GT prior to measurement, we ensure a fair comparison that
+evaluates each model’s ability to provide a high-quality initial seed that can effectively relax into a stable
+local minimum.
+
+D.3    Secondary Structure Assignment
+To evaluate local folding fidelity, we perform secondary structure assignment using the mdtraj library,
+which implements the Dictionary of Protein Secondary Structure (DSSP) algorithm. Residues are classified
+into three simplified categories: Helix (α), Sheet (β ), and Coil (Loop). This automated assignment allows us
+to compare the predicted secondary structure distributions against the ground truth. We can then verify if the
+model correctly recovers complex motifs, such as trans-annular β -sheets or localized α-helices, which are
+essential for the biological function of macro-cyclic peptides.
+
+
+
+
+                                                       21
+E     Efficiency and Complexity Analysis
+This section provides a detailed analysis of the computational complexity and inference performance of
+MuCO. We compare its multi-stage generative architecture against end-to-end folding models and geometric
+graph baselines to highlight its advantages in large-scale ensemble generation.
+
+E.1    Model Parameter Comparison
+As shown in Table 4, MuCO has a competitive trainable parameter count of 40.2M (22.1M for Stage-1 and
+18.0M for Stage-2). Although Stage-1 incorporates a frozen ESM2-650M model, the sequence embeddings
+are pre-computed and cached, effectively removing the language model’s overhead from the iterative sampling
+loop. AF2-based variants (AfCycDesign and HighFold2) involve 92.3M trainable parameters; despite the
+absence of MSAs for shorter peptides, their high-dimensional transformer blocks impose significant memory
+and latency costs. In particular, while EGNN has the fewest parameters (1.5M), it exhibits disproportionately
+high training and inference latency, requiring approximately 90 minutes per epoch. This is likely due to
+the computational overhead of iterative coordinate-dependent message passing, which lacks the vectorized
+efficiency of the attention based mechanisms utilized in MuCO and WGFormer.
+
+E.2    Sampling Speed and Parallel Efficiency
+The inference efficiency of MuCO is a critical advantage, particularly when modeling the dynamic con-
+formational ensembles required for macro-cyclic drug design. As demonstrated in Table 4, we evaluate
+the latency across two dimensions: the initialization (loading) phase and the active inference phase. While
+AF2-based models are typically deterministic, we treat the outputs from their five standard parameter sets as
+5 independent samples to evaluate their search efficiency, while GDL based model only has 1 single sample
+(sample size).
+
+The Loading Bottleneck A significant drawback of AfCycDesign and HighFold2 is their extensive model-
+loading overhead, which exceeds 50 seconds on a single NVIDIA RTX 4090 GPU. This delay is primarily
+due to the heavy weights of the Evoformer blocks and the complex initialization of the ColabFold-optimized
+platform. In contrast, MuCO’s total loading time is approximately 14.6 seconds. Although Stage-1 incor-
+porates a large ESM2-650M language model, its impact on latency is mitigated by our caching strategy:
+sequence embeddings are computed once and stored in a high-speed buffer, allowing the SE(3) flow matcher
+to function with a throughput comparable to lightweight EGNN.
+
+Serial vs. Parallel Throughput In a conventional serial inference setting (sampling one conformation at a
+time), MuCO’s total latency is 1219 ms—roughly four times faster than AF2-based models but slower than
+regressive GDLs like WGFormer. However, the true strength of MuCO’s decoupled architecture lies in its
+tree-structured parallel sampling capability.
+Taking advantage of batch-processing, Stage-1 can generate a batch of N = 10 diverse backbone scaffolds
+in 1312 ms. Subsequently, Stage-2 populates these scaffolds by sampling M side-chain configurations in
+parallel. For instance, populating 100 packing configurations across these 10 backbones requires only 2742
+ms in Stage-2. Consequently, the total wall-clock time to generate a high-quality ensemble of 100 physically
+refined conformations is:
+
+                    Ttotal = Tbackbone (batch = 10) + Tpacking (batch = 100) ≈ 4054 ms.                  (10)
+
+This translates to an amortized latency of 40.5 ms per sample. In practical terms, while an AF2-based
+model is still loading its weights or predicting its first static structure (∼4.5 s), MuCO can deliver a fully
+optimized ensemble of 100 diverse low-energy states. Although specific times could vary with server I/O and
+CPU load, the trend underscores MuCO’s superior scalability for potential well screening for macro-cycles.
+
+
+                                                     22
+Table 4 . Comparison of model complexity and inference latency on a single RTX 4090 GPU. Parallel latency for
+MuCO reflects the total time to generate 100 samples (N = 10, M = 10). Parallel MuCO sampling reaches the lowest
+amortized time generating a candidate conformation.
+
+  Method                  Trainable Params   Loading Time     Sample Size   Sampling Time    Amortized Time
+  AfCycDesign                       92.3M       53.9 s            5           21182 ms           4236 ms
+  HighFold2                         92.3M       52.7 s            5           22561 ms           4512 ms
+  WGFormer                          78.8M        7.3 s            1            103 ms             103 ms
+  EGNN                              1.5M         6.4 s            1            72 ms              72 ms
+  MuCO (Serial)                     40.2M       14.6 s            1            1219 ms           1219 ms
+  MuCO (Parallel)                   40.2M       14.6 s           100           4054 ms            41 ms
+
+
+E.3    Algorithm
+We present our hierarchical inference strategy in Algorithm 3.
+
+Algorithm 3 Inference: Hierarchical K × M Sampling & Optimization
+ 1: Input: Sequence S , Backbone Samples K , Packing Samples M
+ 2: Output: Optimized Conformation Ensemble Xfinal
+ 3: {// — Stage-1: Topology Generation (K parallel samples) —}
+                (i)
+ 4: Initialize B0 ∼ pBprior for i = 1 . . . K
+ 5: for k = 0 to Ksteps − 1 do
+ 6:   tk ← k/Ksteps
+                        (i)
+ 7:   B (i) ← vθB (Btk , tk , S) {Batched inference}
+        (i)                   (i)
+ 8:    Btk+1 ← Step(Btk , B (i) , ∆t)
+ 9: end for
+                     (i)
+10: Set Backbones {B1 }K  i=1
+11: {// — Stage-2: Conditional Packing (K × M parallel samples) —}
+                (i,j)
+12: Initialize C0  ∼ U(T4L ) for i = 1 . . . K, j = 1 . . . M
+13: for k = 0 to Ksteps − 1 do
+14:   tk ← k/Ksteps
+15:   {Condition flow on corresponding backbone i with Cyclic RPE}
+                        (i,j)         (i)
+16:   C (i,j) ← vτC (Ctk , tk |B1 , S)
+        (i,j)     (i,j)
+17:    Ctk+1 ← Ctk + C (i,j) · ∆t
+18: end for
+19: Reconstruct Atoms Xf(i,j) ← ForwardKinematics(B (i) , C (i,j) )
+                                                    1      1
+20: {// — Stage-3: Physics-Aware Optimization —}
+21: for each conformation X (i,j) do
+22:    T ← DetectTopology(X  f(i,j) ) {Algorithm 2}
+23:   X (i,j) ← Minimize(X  f(i,j) , ECharmm36 , T )
+24: end for
+25: return Best X (i,j) based on energy E
+
+
+
+
+                                                         23
+F     More Experimental Details and Results
+F.1     Detailed Experimental Results
+Table 5 . Quantitative comparison across four datasets. MuCO consistently outperforms baselines, achieving the lowest
+potential energy (E) and maintaining high structural diversity (H) comparable to the ground truth.
+                     Dataset: CPTrans                                                  Dataset: CPBind
+  Method          Succ. Energy Div.           Modes (%)            Method          Succ. Energy Div.          Modes (%)
+                   (%) (kJ/mol) (H) H2T K2DE C2C                                    (%) (kJ/mol) (H) H2T K2DE C2C
+  GT (Ref.)    -           6.8     0.57 23.5    74.2    2.3        GT (Ref.)    -           -63.2   0.63 23.9    67.7      8.3
+  EGNN        87.6        126.3    0.57 24.3    74.2    1.5        EGNN        80.6         70.8    0.59 20.0    76.0      4.0
+  WGFormer    88.2        122.5    0.58 22.1    76.5    1.4        WGFormer    81.5         68.4    0.61 21.5    73.8      4.7
+  AfCycDesign 98.5        142.5    0.01 99.9     0.1    0.0        AfCycDesign 98.0         61.2    0.00 99.8    0.2       0.0
+  HighFold2   98.9        138.3    0.00 99.9     0.0    0.0        HighFold2   98.7         54.4    0.00 99.9    0.0       0.0
+  MuCO        94.2        53.9     0.69 45.6    54.1    0.3        MuCO        93.5         -19.2   0.68 57.2    41.7      1.1
+
+                     Dataset: CPCore                                                Dataset: CPSea PDB
+ Method          Succ. Energy Div.            Modes (%)            Method          Succ. Energy Div.          Modes (%)
+                  (%) (kJ/mol) (H) H2T K2DE C2C                                    (%) (kJ/mol) (H) H2T K2DE C2C
+ GT (Ref.)    -            48.4    0.36 9.8      88.2   2.0        GT (Ref.)     -   -184.0 0.54 11.9             86.9     1.2
+ EGNN        91.6         164.1    0.40 11.3     87.5   1.2        EGNN         92.9 -63.1 0.35 12.7              87.3     0.0
+ WGFormer    92.1         160.2    0.42 12.5     86.0   1.5        WGFormer     91.8 -58.5 0.41 14.1              85.9     0.0
+ AfCycDesign 99.0         180.5    0.00 100.0     0.0   0.0        AfCycDesign 98.8 -35.5 0.00 100.0               0.0     0.0
+ HighFold2   99.6         174.3    0.00 100.0     0.0   0.0        HighFold2   100.0 -43.2 0.00 100.0             0.0      0.0
+ MuCO        95.1          97.3    0.67 40.8     58.8   0.4        MuCO         94.1 -160.7 0.88 30.0             70.0     0.0
+
+Note: Succ.: Success Rate; H2T: Head to Tail; C2C: Disulfide; K2DE: Isopeptide. Lower energy indicates better stability.
+
+
+Table 6 . Secondary structure composition analysis. MuCO significantly improves the recovery of α-helices and
+β-sheets compared to GNN and AlphaFold2-based baselines. By arranging datasets side-by-side, we observe consistent
+performance across all tasks.
+
+                    Dataset: CPTrans                                                   Dataset: CPBind
+          Method             α     β   Coil     H                            Method            α     β    Coil   H
+          GT (Ref.)        23.8   1.6 74.7 0.89                              GT (Ref.)        13.1 2.8 84.0 0.74
+          EGNN             7.4    0.0 92.6 0.38                              EGNN              4.6 0.0 95.4 0.27
+          WGFormer          7.8   0.1 92.1 0.40                              WGFormer          5.1 0.2 94.7 0.30
+          AfCycDesign       8.5   1.3 90.2 0.51                              AfCycDesign      6.2 2.1 91.7 0.47
+          MuCO             23.8   2.8 73.4 0.96                              MuCO             21.8 4.7 73.5 1.01
+
+                     Dataset: CPCore                                                 Dataset: CPSea PDB
+          Method             α     β   Coil     H                            Method            α     β    Coil   H
+          GT (Ref.)        14.2   2.3 83.4 0.74                              GT (Ref.)        23.0 1.4 75.6 0.87
+          EGNN             4.9    0.0 95.1 0.28                              EGNN              9.9 0.0 90.1 0.47
+          WGFormer          5.5   0.1 94.4 0.31                              WGFormer         10.5 0.1 89.4 0.49
+          AfCycDesign       6.8   1.5 91.7 0.46                              AfCycDesign      10.5 1.2 88.3 0.57
+          MuCO             20.7   3.4 75.9 0.93                              MuCO             25.4 3.0 71.6 0.99
+
+Note: Values represent mean percentage (%). Headers abbreviated: α=Helix, β=Sheet. Diversity (H) uses Shannon Entropy.
+
+
+
+                                                              24
+Table 7 . Impact of sampling strategy on MuCO performance. We evaluate MuCO across different sampling budgets
+(K × M ), where K and M denote the number of backbone scaffolds and side-chain configurations. Increasing the
+budget significantly lowers the potential energy and improves success rates.
+
+
+                     Dataset: CPCore                                               Dataset: CPSea PDB
+ Config.         Succ.      Energy          Modes (%)              Config.        Succ.     Energy          Modes (%)
+ (K × M )         (%) (kJ/mol) (eV) H2T K2DE C2C                   (K × M )        (%) (kJ/mol) (eV) H2T K2DE C2C
+ GT (Ref.)     -    48.4 0.50 9.8               88.2    2.0        GT (Ref.)     -        -184.0   -1.91 11.9    86.9   1.2
+ HighFold2    99.6 174.3 1.81 100.0              0.0    0.0        HighFold2   100.0       -43.2   -0.45 100.0    0.0   0.0
+ MuCO 1 × 1 95.1 96.3 1.00 38.8                 61.2    0.0        MuCO 1 × 1 94.1        -126.8   -1.32 33.8    66.3   0.0
+ MuCO 1 × 10 99.6 61.9 0.64 40.8                63.4    0.0        MuCO 1 × 10 100.0      -184.6   -1.92 37.6    70.6   0.0
+ MuCO 5 × 5 100.0 20.1 0.21 86.7                85.9    1.9        MuCO 5 × 5 100.0       -231.4   -2.41 85.9    87.1   0.0
+ MuCO 10 × 1 100.0 26.0 0.27 94.3               85.9    1.9        MuCO 10 × 1 100.0      -214.9   -2.23 89.4    87.1   0.0
+ 10 × 10     100.0 -3.9 -0.04 97.7              85.9    3.4        10 × 10     100.0      -247.6   -2.57 94.1    87.1   0.0
+
+Note: Succ.: Success Rate; E: Potential Energy. Mode Coverage indicates the percentage of targets for which at least one valid
+conformation of that mode was generated. High sampling budgets (10 × 10) enable recovering multiple feasible modes.
+
+
+
+
+Table 8 . Ablation study of MuCO components. We compare the full framework against variants removing Stage 1
+(generative backbone) or Stage 2 (flow-based packing). Stage 1 is crucial for success and diversity, while Stage 2 is
+critical for energy minimization.
+
+
+                    Dataset: CPTrans                                                 Dataset: CPBind
+ Method           Succ. Energy Div.         Modes (%)              Method         Succ. Energy Div.          Modes (%)
+                   (%) (kJ/mol) (H) H2T K2DE C2C                                   (%) (kJ/mol) (H) H2T K2DE C2C
+ GT (Ref.)     -             6.8   0.57 23.5    74.2    2.3        GT (Ref.)     -         -63.2    0.63 23.9    67.7   8.3
+ HighFold2    98.9         138.3   0.00 99.9     0.0    0.0        HighFold2    98.7        54.4    0.00 99.9     0.0   0.0
+ EGNN Stage 1 85.0         101.9   0.66 36.7    62.8    0.5        EGNN Stage 1 78.1       132.9    0.65 44.0    48.0   8.0
+ EGNN Stage 2 95.0          63.6   0.69 52.0    47.9    0.1        EGNN Stage 2 95.0        -6.4    0.65 65.3    34.1   0.6
+ MuCO         94.2         53.9    0.69 45.6    54.1    0.3        MuCO         93.5       -19.2    0.68 57.2    41.7   1.1
+
+                     Dataset: CPCore                                               Dataset: CPSea PDB
+ Method           Succ. Energy Div.         Modes (%)              Method         Succ. Energy Div.          Modes (%)
+                   (%) (kJ/mol) (H) H2T K2DE C2C                                   (%) (kJ/mol) (H) H2T K2DE C2C
+ GT (Ref.)     -           48.4    0.36 9.8      88.2   2.0        GT (Ref.)      -       -184.0   0.54 11.9     86.9   1.2
+ HighFold2    99.6        174.3    0.00 100.0     0.0   0.0        HighFold2    100.0      -43.2   0.00 100.0     0.0   0.0
+ EGNN Stage 1 85.6        139.0    0.61 29.8     70.2   0.0        EGNN Stage 1 81.2      -132.0   0.67 30.4     68.1   1.4
+ EGNN Stage 2 92.0         98.8    0.69 44.2     55.4   0.4        EGNN Stage 2 96.5      -138.9   0.97 40.2     59.8   0.0
+ MuCO         95.1        97.3     0.67 40.8     58.8   0.4        MuCO          94.1     -160.7   0.88 30.0     70.0   0.0
+
+Note: Succ.: Success Rate; Div.: Diversity. "EGNN Stage 1/2" use regressive EGNN in corresponding stages. The full MuCO model
+balances stability and diversity best.
+
+
+
+
+                                                              25
+Table 9 . Ablation analysis of secondary structure components. Removing Stage 1 (Backbone) causes collapse into
+random coils, while removing Stage 2 (FlowPacking) yields suboptimal distributions. MuCO achieves the most balanced
+profile, matching the ground truth diversity (H).
+
+
+                     Dataset: CPTrans                                                 Dataset: CPBind
+           Method             α       β Coil   H                           Method              α       β Coil   H
+           GT (Ref.)    23.8 1.6 74.7 0.89                                 GT (Ref.)    13.1 2.8 84.0 0.74
+           EGNN Stage 1 8.2 0.0 91.8 0.41                                  EGNN Stage 1 4.9 0.0 95.1 0.28
+           EGNN Stage 2 21.6 3.0 75.4 0.94                                 EGNN Stage 2 19.7 4.8 75.4 0.98
+           MuCO         23.8 2.8 73.4 0.96                                 MuCO         21.8 4.7 73.5 1.01
+
+                     Dataset: CPCore                                               Dataset: CPSea PDB
+           Method             α       β Coil   H                           Method              α       β Coil   H
+           GT (Ref.)    14.2 2.3 83.4 0.74                                 GT (Ref.)    23.0 1.4 75.6 0.87
+           EGNN Stage 1 4.5 0.1 95.5 0.27                                  EGNN Stage 1 11.2 0.0 88.8 0.51
+           EGNN Stage 2 19.2 3.8 77.0 0.93                                 EGNN Stage 2 22.2 3.2 74.5 0.96
+           MuCO         20.7 3.4 75.9 0.93                                 MuCO         25.4 3.0 71.6 0.99
+
+Note: Columns represent percentage (%) of α-Helix, β-Sheet, and Coil. H: Diversity (Shannon Entropy). "EGNN Stage 1/2" use
+regressive EGNN in corresponding stages. The full MuCO model balances stability and diversity best.
+
+
+
+
+Table 10 . Impact of force field optimization on secondary structure. We compare structural composition before (w/o
+Opt.) and after refinement. MuCO exhibits a dramatic transition from disordered raw states to regular structures during
+optimization, whereas HighFold2 (HF2) remains largely static.
+
+
+                     Dataset: CPTrans                                                 Dataset: CPBind
+          Method                  α    β Coil H                           Method                   α    β Coil H
+          GT (Ref.)       23.8 1.6 74.7 0.89                              GT (Ref.)       13.1 2.8 84.0 0.74
+          HF2 (w/o Opt.)  9.0 1.9 89.1 0.57                               HF2 (w/o Opt.)  6.9 3.0 90.1 0.56
+          HF2 (Final)      9.5 1.5 89.0 0.56                              HF2 (Final)      7.4 2.5 90.1 0.55
+          MuCO (w/o Opt.) 0.0 0.7 99.3 0.06                               MuCO (w/o Opt.) 0.0 1.2 98.8 0.09
+          MuCO (Final)    23.8 2.8 73.4 0.96                              MuCO (Final)    21.8 4.7 73.5 1.01
+
+                     Dataset: CPCore                                               Dataset: CPSea PDB
+          Method                  α    β Coil H                           Method                   α    β Coil H
+          GT (Ref.)       14.2 2.3 83.4 0.74                              GT (Ref.)       23.0 1.4 75.6 0.87
+          HF2 (w/o Opt.)  7.1 2.3 90.6 0.53                               HF2 (w/o Opt.) 12.1 3.1 84.8 0.73
+          HF2 (Final)      7.5 1.9 90.7 0.52                              HF2 (Final)     12.1 1.5 86.3 0.64
+          MuCO (w/o Opt.) 0.0 1.0 99.0 0.08                               MuCO (w/o Opt.) 0.0 0.8 99.2 0.07
+          MuCO (Final)    20.7 3.4 75.9 0.93                              MuCO (Final)    25.4 3.0 71.6 0.99
+
+Note: HF2: HighFold2. "w/o Opt." is the raw output before force field refinement; "Final" is after refinement. MuCO effectively
+folds disordered (high coil, low H) raw states into regular structures during optimization.
+
+
+
+
+                                                              26
+F.2    Examples of Sampling
+
+
+
+
+Figure 12 . Visual Comparison of predicted cyclic peptide conformations across diverse sub-datasets. Even in single
+sample mode, MuCO consistently achieves significantly lower potential energy (E) compared to HighFold2 and EGNN
+baselines. Notably, MuCO demonstrates superior fidelity in recovering native-like secondary structure motifs (e.g.,
+α-helices), whereas the baseline models often collapse into high-energy, disordered states.
+
+
+
+                                                        27
+Figure 13 . Sample of 1JD6_A_16_31 generated by MuCO. Column (A) shows the Stage-1 backbone scaffolds
+(cyan), while columns (B) show the corresponding all-atom samples (green) after Stage 2 and 3. The diversity of k-to-de
+and head-to-tail cycles highlights the model’s capacity to sample multiple metastable states. Annotations specify the
+cyclization mode and potential energy (kJ/mol).
+
+
+
+
+                                                          28
+Figure 14 . Sample of AF-X1M060-F1_0_15_29 generated by MuCO. Column (A) shows the Stage-1 backbone
+scaffolds (cyan), while columns (B) show the corresponding all-atom samples (green) after Stage 2 and 3. The peptide
+structures demonstrate that MuCO effectively identifies and incorporates two distinct cyclization modes: head-to-tail
+backbone closure and cys-to-cys disulfide bridges.
+
+
+
+
+                                                         29
+

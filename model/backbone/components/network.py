@@ -6,11 +6,11 @@ import functools as fn
 import math
 
 import torch
-from model.FoldFlow2.components import ipa_pytorch
+from model.backbone.components import ipa_pytorch
 from torch import nn
 from torch.nn import functional as F
 
-from model.FoldFlow2.data.all_atom import compute_backbone
+from model.backbone.data.all_atom import compute_backbone
 
 
 def calc_distogram(pos, min_bin, max_bin, num_bins):

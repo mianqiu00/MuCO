@@ -3,7 +3,7 @@ from einops import rearrange
 from functorch import vmap
 from geomstats.geometry.special_orthogonal import SpecialOrthogonal
 
-from model.FoldFlow2.flow.flow_utils.so3_helpers import rotmat_to_rotvec
+from model.backbone.flow.flow_utils.so3_helpers import rotmat_to_rotvec
 
 
 class SO3ConditionalFlowMatcher:

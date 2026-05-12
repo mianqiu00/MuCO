@@ -8,16 +8,16 @@ from utils.logger import Logger, set_log
 from utils.train_utils import count_parameters
 from pathlib import Path
 from dataset_cluster import get_dataloader
-from utils.structure_utils import create_structure_from_crds
-from utils.sidechain_utils import Idealizer
+from model.sidechain.utils.structure_utils import create_structure_from_crds
+from model.sidechain.utils.sidechain_utils import Idealizer
 from models.cnf import CNF
 from model.sidechain.models.confidence import Confidence
 from models.equiformer_v2.equiformer_v2 import EquiformerV2
 from utils.metrics import metrics_per_chi, atom_rmsd
 import math
 import shutil
-from utils.constants import chi_mask as chi_mask_true
-from utils.constants import atom14_mask as atom_mask_true
+from model.sidechain.utils.constants import chi_mask as chi_mask_true
+from model.sidechain.utils.constants import atom14_mask as atom_mask_true
 
 class Sampler(object):
     def __init__(self, config, use_gt_masks=False, ddp=False):
