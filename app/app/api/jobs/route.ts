@@ -4,7 +4,7 @@ import { AA_PATTERN } from "@/lib/utils";
 import { createJob } from "@/lib/jobs";
 
 const schema = z.object({
-  sequence: z.string().min(2).max(512).regex(AA_PATTERN),
+  sequence: z.string().min(2).max(30).regex(AA_PATTERN),
   K: z.number().int().min(1).max(3),
   M: z.number().int().min(1).max(5),
   downloadEnabled: z.boolean().default(true),

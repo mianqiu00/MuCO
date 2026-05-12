@@ -6,3 +6,6 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export const AA_PATTERN = /^[ACDEFGHIKLMNPQRSTVWYX]+$/i;
+export function sanitizeSequence(value: string) {
+  return value.toUpperCase().replace(/[^ACDEFGHIKLMNPQRSTVWYX]/g, "").slice(0, 30);
+}

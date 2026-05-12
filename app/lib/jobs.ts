@@ -7,6 +7,7 @@ export const PROJECT_ROOT = path.resolve(process.cwd(), "..");
 export const JOB_ROOT = path.join(PROJECT_ROOT, "runs", "web");
 export const PYMOL_SCRIPT = path.join(PROJECT_ROOT, "app", "pymol", "render_pdb.py");
 export const MAX_CONCURRENT_JOBS = 2;
+export const FEEDBACK_LOG = path.join(JOB_ROOT, "feedback.jsonl");
 
 export type MucoRequest = {
   sequence: string;
@@ -24,7 +25,11 @@ export function jobDir(jobId: string) {
 }
 
 export function assertJobId(jobId: string) {
-  if (!/^[0-9a-f-]{36}$/.test(jobId)) throw new Error("Invalid job id");
+  if (!/^(\d{8}T\d{6}_)?[0-9a-f-]{36}$/.test(jobId)) throw new Error("Invalid job id");
+}
+
+function timestampPrefix() {
+  return new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "");
 }
 
 export function readJson<T>(file: string, fallback: T): T {
@@ -45,7 +50,7 @@ function progressPath(jobId: string) {
 
 function listJobIds() {
   ensureDir(JOB_ROOT);
-  return fs.readdirSync(JOB_ROOT).filter((name) => /^[0-9a-f-]{36}$/.test(name) && fs.statSync(jobDir(name)).isDirectory());
+  return fs.readdirSync(JOB_ROOT).filter((name) => /^(\d{8}T\d{6}_)?[0-9a-f-]{36}$/.test(name) && fs.statSync(jobDir(name)).isDirectory());
 }
 
 function jobProgress(jobId: string) {
@@ -124,7 +129,7 @@ export function dispatchQueue() {
 
 export function createJob(req: MucoRequest) {
   ensureDir(JOB_ROOT);
-  const id = randomUUID();
+  const id = `${timestampPrefix()}_${randomUUID()}`;
   const dir = jobDir(id);
   ensureDir(dir);
   const inputPath = path.join(dir, "input.json");
@@ -153,4 +158,9 @@ export function fileToken(kind: "pdb" | "png", k: number, m: number) {
 
 export function publicFileUrl(jobId: string, token: string) {
   return `/api/jobs/${jobId}/files?file=${encodeURIComponent(token)}`;
+}
+
+export function appendFeedback(value: unknown) {
+  ensureDir(JOB_ROOT);
+  fs.appendFileSync(FEEDBACK_LOG, `${JSON.stringify(value)}\n`);
 }

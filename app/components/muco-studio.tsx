@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState, startTransition } from "react";
-import { Download, Loader2, Sparkles } from "lucide-react";
+import { CheckCircle2, Download, Loader2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
-import { AA_PATTERN } from "@/lib/utils";
+import { AA_PATTERN, sanitizeSequence } from "@/lib/utils";
 
 type Progress = {
   status?: string;
@@ -50,9 +50,10 @@ export function MucoStudio() {
   const [job, setJob] = useState<JobState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [selectedGood, setSelectedGood] = useState<Set<string>>(new Set());
 
   const cleanSequence = sequence.replace(/\s+/g, "").toUpperCase();
-  const valid = cleanSequence.length >= 2 && AA_PATTERN.test(cleanSequence);
+  const valid = cleanSequence.length >= 2 && cleanSequence.length <= 30 && AA_PATTERN.test(cleanSequence);
   const resultMap = useMemo(() => new Map(job?.results.map((r) => [`${r.k}-${r.m}`, r]) ?? []), [job]);
   const isRunning = submitting || job?.progress?.status === "queued" || (!!jobId && !["done", "failed"].includes(job?.progress?.status ?? ""));
 
@@ -62,11 +63,12 @@ export function MucoStudio() {
       return;
     }
     if (!valid) {
-      setError("Use one-letter amino-acid codes only; minimum length is 2.");
+      setError("Use one-letter amino-acid codes only; sequence length must be 2-30 residues.");
       return;
     }
     setSubmitting(true);
     setError(null);
+    setSelectedGood(new Set());
     setJob({ id: "requesting", progress: { status: "queued", stage: "requesting" }, results: [], downloadUrl: null });
     const res = await fetch("/api/jobs", {
       method: "POST",
@@ -80,6 +82,23 @@ export function MucoStudio() {
       return;
     }
     setJobId(data.id);
+  }
+
+  async function markGood(item: Result) {
+    if (!jobId) return;
+    const key = `${item.k}-${item.m}`;
+    const action = selectedGood.has(key) ? "deselect" : "select";
+    setSelectedGood((prev) => {
+      const next = new Set(prev);
+      if (action === "select") next.add(key);
+      else next.delete(key);
+      return next;
+    });
+    await fetch(`/api/jobs/${jobId}/feedback`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ k: item.k, m: item.m, action }),
+    });
   }
 
   useEffect(() => {
@@ -105,39 +124,49 @@ export function MucoStudio() {
   return (
     <div className="min-h-screen molecule-grid px-4 py-8 md:px-10">
       <main className="mx-auto max-w-7xl space-y-8">
+        <header className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <img src="/logo.png" alt="MuCO logo" className="h-12 w-12 rounded-2xl bg-white/95 object-contain p-1 shadow-glow" />
+            <div>
+              <div className="text-lg font-black text-white">MuCO</div>
+              <div className="text-xs uppercase tracking-[0.28em] text-teal-200/70">Cyclic peptide generation</div>
+            </div>
+          </div>
+          <a href="https://arxiv.org/abs/2602.11189" target="_blank" rel="noreferrer" className="rounded-full border border-teal-200/20 bg-white/10 px-4 py-2 text-sm font-semibold text-teal-50 hover:bg-white/15">
+            Read the paper
+          </a>
+        </header>
+
         <section className="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
           <div className="space-y-6 pt-8">
-            <div className="inline-flex rounded-full border border-teal-200/20 bg-teal-300/10 px-4 py-2 text-sm text-teal-100">
-              MuCO online cyclization studio
-            </div>
-            <a
-              href="https://arxiv.org/abs/2602.11189"
-              target="_blank"
-              rel="noreferrer"
-              className="ml-3 inline-flex rounded-full border border-cyan-200/20 bg-cyan-300/10 px-4 py-2 text-sm text-cyan-100 hover:bg-cyan-300/20"
-            >
-              Paper: arXiv:2602.11189
-            </a>
+            <div className="inline-flex rounded-full border border-teal-200/20 bg-teal-300/10 px-4 py-2 text-sm text-teal-100">Multi-stage conformation optimization</div>
             <div className="space-y-4">
-              <h1 className="max-w-3xl text-5xl font-black tracking-tight text-white md:text-7xl">
-                Generate cyclic peptides from sequence.
+              <h1 className="max-w-2xl text-4xl font-black leading-[1.08] tracking-tight text-white md:text-6xl">
+                Design cyclic peptide conformations with MuCO
               </h1>
               <p className="max-w-2xl text-lg leading-8 text-slate-300">
-                Multi-stage backbone generation, FlowPacker side-chain packing, and OpenMM relaxation in one streamlined interface.
+                Enter a peptide sequence and explore backbone sampling, side-chain packing, and physics-aware relaxation in a single workflow.
               </p>
             </div>
+            <Card className="border-amber-200/40 bg-amber-300/10 shadow-glow">
+              <CardContent className="p-5">
+                <div className="text-sm font-semibold uppercase tracking-[0.25em] text-amber-100">Citation</div>
+                <div className="mt-2 text-lg font-bold text-white">MuCO: Generative Peptide Cyclization Empowered by Multi-stage Conformation Optimization</div>
+                <a className="mt-2 inline-block text-sm font-semibold text-amber-100 underline underline-offset-4" href="https://arxiv.org/abs/2602.11189" target="_blank" rel="noreferrer">arXiv:2602.11189</a>
+              </CardContent>
+            </Card>
           </div>
 
           <Card className="glass-card">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-2xl"><Sparkles className="text-teal-300" /> Generation Setup</CardTitle>
-              <CardDescription>K is capped at 3 and M at 5 for online use.</CardDescription>
+              <CardTitle className="flex items-center gap-2 text-2xl"><Sparkles className="text-teal-300" /> Start a MuCO run</CardTitle>
+              <CardDescription>Generate up to 3 backbone samples and 5 side-chain packings per backbone.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="space-y-2">
                 <Label>Peptide sequence</Label>
-                <Textarea value={sequence} onChange={(e) => setSequence(e.target.value)} placeholder="ACDEFGHIK" />
-                <div className="text-xs text-slate-400">Length: {cleanSequence.length} residues</div>
+                <Textarea value={sequence} onChange={(e) => setSequence(sanitizeSequence(e.target.value))} placeholder="ACDEFGHIK" maxLength={30} />
+                <div className="text-xs text-slate-400">Length: {cleanSequence.length}/30 residues. Unsupported characters are ignored.</div>
               </div>
               <div className="grid gap-5 md:grid-cols-2">
                 <div className="space-y-3">
@@ -150,18 +179,18 @@ export function MucoStudio() {
                 </div>
               </div>
               <label className="flex items-center justify-between rounded-2xl border border-teal-200/15 bg-slate-950/30 px-4 py-3 text-sm">
-                <span>Enable ZIP download for successful molecules</span>
+                <span>Package successful relaxed structures as a ZIP</span>
                 <input type="checkbox" checked={downloadEnabled} onChange={(e) => setDownloadEnabled(e.target.checked)} className="h-5 w-5 accent-teal-300" />
               </label>
               {error && <div className="rounded-xl border border-red-300/30 bg-red-500/10 p-3 text-sm text-red-100">{error}</div>}
               {isRunning && (
                 <div className="rounded-xl border border-teal-300/20 bg-teal-300/10 p-3 text-sm text-teal-50">
-                  A MuCO job is running. Please wait and keep this page open; starting another generation is disabled until this one finishes.
+                  Your MuCO run is in progress. Please keep this page open; another generation can be started after this run finishes.
                 </div>
               )}
               {job?.progress?.status === "failed" && (
                 <div className="rounded-xl border border-red-300/30 bg-red-500/10 p-3 text-sm text-red-100">
-                  The MuCO job failed. Please check the server log or try a shorter sequence.
+                  This MuCO run failed. Please try again or use a shorter sequence.
                 </div>
               )}
               <Button onClick={submit} disabled={isRunning} size="lg" className="w-full">
@@ -174,8 +203,8 @@ export function MucoStudio() {
         <section className="grid gap-6 lg:grid-cols-[0.75fr_1.25fr]">
           <Card className="glass-card">
             <CardHeader>
-              <CardTitle>Pipeline Progress</CardTitle>
-              <CardDescription>{jobId ? `Job ${jobId.slice(0, 8)}` : "Submit a sequence to start."}</CardDescription>
+              <CardTitle>Generation Progress</CardTitle>
+              <CardDescription>{jobId ? `Run ${jobId.slice(0, 8)}` : "Submit a sequence to begin."}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
               <div className="rounded-2xl border border-teal-200/15 bg-slate-950/40 p-4">
@@ -198,8 +227,8 @@ export function MucoStudio() {
 
           <Card className="glass-card">
             <CardHeader>
-              <CardTitle>Successful Relaxed Structures</CardTitle>
-              <CardDescription>Columns are K, rows are M. Failed cyclization outputs are hidden.</CardDescription>
+              <CardTitle>Choose the Best Structure</CardTitle>
+              <CardDescription>Columns are backbone samples K; rows are side-chain packings M. Only successful relaxed structures are shown.</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${k}, minmax(0, 1fr))` }}>
@@ -209,8 +238,15 @@ export function MucoStudio() {
                     return (
                       <div key={`${ki}-${mi}`} className="min-h-[220px] rounded-2xl border border-teal-200/15 bg-slate-950/40 p-3">
                         <div className="mb-2 flex justify-between text-xs text-slate-300"><span>K{ki + 1} / M{mi + 1}</span><span>{item?.energy != null ? `${item.energy.toFixed(1)} kcal/mol` : "pending"}</span></div>
-                        {item?.imageUrl ? <img src={item.imageUrl} alt={`K${ki + 1} M${mi + 1}`} className="h-40 w-full rounded-xl object-contain bg-white" /> : <div className="flex h-40 items-center justify-center rounded-xl bg-slate-900 text-sm text-slate-500">No successful molecule yet</div>}
-                        {item?.pdbUrl && <a className="mt-3 block text-center text-sm text-teal-200 hover:text-teal-100" href={item.pdbUrl}>Download PDB</a>}
+                        {item?.imageUrl ? <img src={item.imageUrl} alt={`K${ki + 1} M${mi + 1}`} className="h-40 w-full rounded-xl object-contain bg-white" /> : <div className="flex h-40 items-center justify-center rounded-xl bg-slate-900 text-sm text-slate-500">No successful structure yet</div>}
+                        {item && (
+                          <div className="mt-3 grid grid-cols-2 gap-2">
+                            <Button size="sm" variant={selectedGood.has(`${item.k}-${item.m}`) ? "default" : "outline"} onClick={() => markGood(item)}>
+                              <CheckCircle2 /> {selectedGood.has(`${item.k}-${item.m}`) ? "Good" : "Looks good"}
+                            </Button>
+                            {item.pdbUrl && <a className="inline-flex h-9 items-center justify-center rounded-full border border-teal-300/40 text-sm text-teal-100 hover:bg-teal-400/10" href={item.pdbUrl}>PDB</a>}
+                          </div>
+                        )}
                       </div>
                     );
                   }),
