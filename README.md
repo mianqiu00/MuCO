@@ -69,27 +69,6 @@ Representative observations reported in the paper include:
 - MuCO improves diversity relative to AF2-based cyclic peptide baselines that exhibit severe mode collapse.
 - MuCO reaches **41 ms amortized latency per sample** under parallel sampling, compared with multi-second latency for folding-based baselines.
 
-## Repository Structure
-
-```text
-MuCO-ICML2026/
-├── backbone_train.py
-├── backbone_sample.py
-├── sidechain_train.py
-├── sidechain_sample.py
-├── muco_infer.py
-├── config/
-├── data/
-├── model/
-├── openfold/
-├── relaxer/
-├── runner/
-├── saved_model/
-├── utils/
-├── assets/
-│   └── figures/
-├── environment.yml
-└── README.md
 ```
 
 ## Installation
