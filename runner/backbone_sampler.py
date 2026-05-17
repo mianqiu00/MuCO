@@ -141,34 +141,47 @@ class BackboneSampler:
             self.device = torch.device("cpu")
             self._log.info("Using CPU")
 
-        # 3. Initialize Model and Flow Matcher
-        # We need the flow matcher to initialize the dataset correctly
-        self._flow_matcher = se3_fm.SE3FlowMatcher(self._fm_conf)
-        
-        dependencies = ff2_dependencies.FF2Dependencies(conf)
-        self._model = flow_model.FF2Model.from_dependencies(dependencies)
-        
-        # 4. Load Checkpoint
+        # 3. Load checkpoint before model construction so embedded ESM weights can
+        # initialize the sequence encoder without touching external caches.
         full_ckpt_dir = self._exp_conf.full_ckpt_dir
         ckpt_path = full_ckpt_dir if os.path.isfile(full_ckpt_dir) else os.path.join(full_ckpt_dir, f"epoch_{ckpt_epoch}.pth")
-        self._load_checkpoint(ckpt_path)
+        state_dict = self._read_checkpoint_state_dict(ckpt_path)
+
+        # 4. Initialize Model and Flow Matcher
+        # We need the flow matcher to initialize the dataset correctly
+        self._flow_matcher = se3_fm.SE3FlowMatcher(self._fm_conf)
+        esm_state_dict = self._extract_esm_state_dict(state_dict)
+        dependencies = ff2_dependencies.FF2Dependencies(conf, esm_state_dict=esm_state_dict)
+        self._model = flow_model.FF2Model.from_dependencies(dependencies)
+        self._load_state_dict(state_dict)
         
         # Move to device and eval mode
         self._model = self._model.to(self.device)
         self._model.eval()
         self._model.float()
 
-    def _load_checkpoint(self, ckpt_path):
-        """Loads weights, handling potential DDP prefix issues."""
+    def _read_checkpoint_state_dict(self, ckpt_path):
+        """Reads weights, handling potential DDP prefix issues."""
         self._log.info(f"Loading checkpoint from {ckpt_path}")
         checkpoint = torch.load(ckpt_path, map_location=self.device, weights_only=False)
         
         # Extract state dict
         if 'model' in checkpoint:
-            state_dict = checkpoint['model']
+            return checkpoint['model']
         else:
-            state_dict = checkpoint
-            
+            return checkpoint
+
+    @staticmethod
+    def _extract_esm_state_dict(state_dict):
+        prefix = "seq_encoder.esm."
+        esm_state_dict = {
+            key[len(prefix):]: value
+            for key, value in state_dict.items()
+            if key.startswith(prefix)
+        }
+        return esm_state_dict or None
+
+    def _load_state_dict(self, state_dict):
         # Load
         missing, unexpected = self._model.load_state_dict(state_dict, strict=False)
         if len(missing) > 0:

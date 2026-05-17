@@ -1,0 +1,22 @@
+services:
+  muco-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    image: muco-api:latest
+    container_name: muco-api
+    environment:
+      MUCO_DEVICE: "0"
+      JOB_ROOT: /data/muco/jobs
+      LOG_ROOT: /data/muco/logs
+      TORCH_HOME: /opt/torch-cache
+      NVIDIA_VISIBLE_DEVICES: "0"
+    volumes:
+      - ./params:/srv/muco/params:ro
+      - ./runs/jobs:/data/muco/jobs
+      - ./runs/logs:/data/muco/logs
+      - ./torch-cache:/opt/torch-cache
+    ports:
+      - "8000:8000"
+    gpus: all
+    restart: unless-stopped

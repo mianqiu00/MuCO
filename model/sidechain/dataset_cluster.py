@@ -11,7 +11,10 @@ from tqdm.contrib.concurrent import process_map
 import warnings
 import biotite.structure as struc
 from biotite.structure.io.pdb import PDBFile
-from biotite.structure.io.pdbx import CIFFile, get_structure
+try:
+    from biotite.structure.io.pdbx import CIFFile, get_structure
+except ImportError:
+    from biotite.structure.io.pdbx import PDBxFile as CIFFile, get_structure
 
 from model.sidechain.utils.constants import three_to_one_letter, letter_to_num, max_num_heavy_atoms, \
     restype_to_heavyatom_names, heavyatom_to_label, chi_alt_truths, num_to_letter, chi_true_indices, chi_mask, atom_types, atom_type_num

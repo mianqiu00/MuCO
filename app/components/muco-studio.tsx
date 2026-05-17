@@ -45,6 +45,9 @@ export function MucoStudio() {
   const [sequence, setSequence] = useState("ACDEFGHIKLMNPQ");
   const [k, setK] = useState(1);
   const [m, setM] = useState(1);
+  const [backboneSteps, setBackboneSteps] = useState(100);
+  const [sidechainSteps, setSidechainSteps] = useState(10);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [downloadEnabled, setDownloadEnabled] = useState(true);
   const [jobId, setJobId] = useState<string | null>(null);
   const [job, setJob] = useState<JobState | null>(null);
@@ -73,7 +76,14 @@ export function MucoStudio() {
     const res = await fetch("/api/jobs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sequence: cleanSequence, K: k, M: m, downloadEnabled }),
+      body: JSON.stringify({
+        sequence: cleanSequence,
+        K: k,
+        M: m,
+        downloadEnabled,
+        backboneSteps,
+        sidechainSteps,
+      }),
     });
     const data = await res.json();
     setSubmitting(false);
@@ -137,26 +147,29 @@ export function MucoStudio() {
           </a>
         </header>
 
-        <section className="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
-          <div className="space-y-6 pt-8">
+        <section className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+          <div className="space-y-6">
             <div className="inline-flex rounded-full border border-teal-200/20 bg-teal-300/10 px-4 py-2 text-sm text-teal-100">Multi-stage conformation optimization</div>
             <div className="space-y-4">
               <h1 className="max-w-2xl text-4xl font-black leading-[1.08] tracking-tight text-white md:text-6xl">
-                Design cyclic peptide conformations with MuCO
+                MuCO: Generative Peptide Cyclization
               </h1>
               <p className="max-w-2xl text-lg leading-8 text-slate-300">
                 Enter a peptide sequence and explore backbone sampling, side-chain packing, and physics-aware relaxation in a single workflow.
               </p>
             </div>
-            <Card className="border-amber-200/40 bg-amber-300/10 shadow-glow">
-              <CardContent className="p-5">
-                <div className="text-sm font-semibold uppercase tracking-[0.25em] text-amber-100">Citation</div>
-                <div className="mt-2 text-lg font-bold text-white">MuCO: Generative Peptide Cyclization Empowered by Multi-stage Conformation Optimization</div>
-                <a className="mt-2 inline-block text-sm font-semibold text-amber-100 underline underline-offset-4" href="https://arxiv.org/abs/2602.11189" target="_blank" rel="noreferrer">arXiv:2602.11189</a>
-              </CardContent>
-            </Card>
           </div>
 
+          <Card className="border-amber-200/40 bg-amber-300/10 shadow-glow">
+            <CardContent className="p-5">
+              <div className="text-sm font-semibold uppercase tracking-[0.25em] text-amber-100">Citation</div>
+              <div className="mt-2 text-lg font-bold text-white">MuCO: Generative Peptide Cyclization Empowered by Multi-stage Conformation Optimization</div>
+              <a className="mt-2 inline-block text-sm font-semibold text-amber-100 underline underline-offset-4" href="https://arxiv.org/abs/2602.11189" target="_blank" rel="noreferrer">arXiv:2602.11189</a>
+            </CardContent>
+          </Card>
+        </section>
+
+        <section className="grid gap-6 lg:grid-cols-[1fr_0.78fr]">
           <Card className="glass-card">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-2xl"><Sparkles className="text-teal-300" /> Start a MuCO run</CardTitle>
@@ -178,6 +191,28 @@ export function MucoStudio() {
                   <Slider min={1} max={5} step={1} value={[m]} onValueChange={(v) => setM(v[0])} />
                 </div>
               </div>
+              <div className="rounded-2xl border border-teal-200/15 bg-slate-950/30">
+                <button
+                  type="button"
+                  onClick={() => setAdvancedOpen((value) => !value)}
+                  className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-semibold text-teal-50"
+                >
+                  <span>Advanced Settings</span>
+                  <span className="text-teal-200/70">{advancedOpen ? "Hide" : "Show"}</span>
+                </button>
+                {advancedOpen && (
+                  <div className="grid gap-5 border-t border-teal-200/10 p-4 md:grid-cols-2">
+                    <div className="space-y-3">
+                      <Label>Backbone steps: {backboneSteps}</Label>
+                      <Slider min={2} max={200} step={1} value={[backboneSteps]} onValueChange={(v) => setBackboneSteps(v[0])} />
+                    </div>
+                    <div className="space-y-3">
+                      <Label>Side-chain steps: {sidechainSteps}</Label>
+                      <Slider min={1} max={50} step={1} value={[sidechainSteps]} onValueChange={(v) => setSidechainSteps(v[0])} />
+                    </div>
+                  </div>
+                )}
+              </div>
               <label className="flex items-center justify-between rounded-2xl border border-teal-200/15 bg-slate-950/30 px-4 py-3 text-sm">
                 <span>Package successful relaxed structures as a ZIP</span>
                 <input type="checkbox" checked={downloadEnabled} onChange={(e) => setDownloadEnabled(e.target.checked)} className="h-5 w-5 accent-teal-300" />
@@ -198,9 +233,6 @@ export function MucoStudio() {
               </Button>
             </CardContent>
           </Card>
-        </section>
-
-        <section className="grid gap-6 lg:grid-cols-[0.75fr_1.25fr]">
           <Card className="glass-card">
             <CardHeader>
               <CardTitle>Generation Progress</CardTitle>
@@ -212,7 +244,7 @@ export function MucoStudio() {
                 <div className="mt-1 text-3xl font-black text-teal-100">
                   {job ? `${job.progress.queue_ahead ?? (job.progress.status === "queued" ? 1 : 0)}` : "0"}
                 </div>
-                <div className="mt-1 text-xs text-slate-400">jobs ahead, including model loading overhead</div>
+                <div className="mt-1 text-xs text-slate-400">jobs ahead in the queue</div>
               </div>
               <ProgressBar label="Stage 1 diffusion" item={job?.progress.stage1} />
               <ProgressBar label="Stage 2 diffusion" item={job?.progress.stage2} />
@@ -224,7 +256,9 @@ export function MucoStudio() {
               )}
             </CardContent>
           </Card>
+        </section>
 
+        <section>
           <Card className="glass-card">
             <CardHeader>
               <CardTitle>Choose the Best Structure</CardTitle>
@@ -252,6 +286,25 @@ export function MucoStudio() {
                   }),
                 )}
               </div>
+            </CardContent>
+          </Card>
+        </section>
+
+        <section>
+          <Card className="glass-card border-teal-200/10 bg-slate-950/30">
+            <CardHeader>
+              <CardTitle>Acknowledgments</CardTitle>
+              <CardDescription>
+                MuCO builds on open scientific software for protein modeling, equivariant learning, and molecular simulation.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-3 text-sm leading-6 text-slate-300 md:grid-cols-2">
+              <a className="font-semibold text-teal-100 underline underline-offset-4" href="https://github.com/DreamFold/FoldFlow" target="_blank" rel="noreferrer">FoldFlow</a>
+              <a className="font-semibold text-teal-100 underline underline-offset-4" href="https://github.com/atomicarchitects/equiformer_v2" target="_blank" rel="noreferrer">EquiformerV2</a>
+              <a className="font-semibold text-teal-100 underline underline-offset-4" href="https://github.com/aqlaboratory/openfold" target="_blank" rel="noreferrer">OpenFold</a>
+              <a className="font-semibold text-teal-100 underline underline-offset-4" href="https://github.com/facebookresearch/esm" target="_blank" rel="noreferrer">ESM</a>
+              <a className="font-semibold text-teal-100 underline underline-offset-4" href="https://openmm.org/" target="_blank" rel="noreferrer">OpenMM</a>
+              <span>CHARMM36 force field for physics-aware all-atom refinement.</span>
             </CardContent>
           </Card>
         </section>

@@ -22,8 +22,9 @@ dependency = lambda fn : property(lru_cache()(fn))
 
 class FF2Dependencies:
 
-    def __init__(self, config):
+    def __init__(self, config, esm_state_dict=None):
         self.config = config
+        self.esm_state_dict = esm_state_dict
             
     @dependency
     def flow_matcher(self):
@@ -74,6 +75,7 @@ class FF2Dependencies:
         # load & set up the model
         esm_wrapper = FrozenEsmModel(
             self.config.model.esm2_model_key,
+            esm_state_dict=self.esm_state_dict,
         )
         esm_wrapper.esm.eval()
         esm_wrapper.esm.requires_grad_(False)

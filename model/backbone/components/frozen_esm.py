@@ -5,6 +5,7 @@ import esm
 import torch
 import tree
 from esm.data import Alphabet
+from esm.model.esm2 import ESM2
 from openfold.np import residue_constants
 from torch import nn
 
@@ -15,6 +16,13 @@ ESM_REGISTRY = {
     "esm2_650M": esm.pretrained.esm2_t33_650M_UR50D,
     "esm2_3B": esm.pretrained.esm2_t36_3B_UR50D,
     "esm2_15B": esm.pretrained.esm2_t48_15B_UR50D,
+}
+ESM2_ARCH = {
+    "esm2_8M_270K": (6, 320, 20),
+    "esm2_35M_270K": (12, 480, 20),
+    "esm2_650M": (33, 1280, 20),
+    "esm2_3B": (36, 2560, 40),
+    "esm2_15B": (48, 5120, 40),
 }
 
 SINGLE_REPNS_SEQ_LEN_SHAPE_IDX = 1
@@ -35,9 +43,22 @@ class FrozenEsmModel(nn.Module):
         self,
         model_key: str,
         use_esm_attn_map: bool = True,
+        esm_state_dict: Optional[dict] = None,
     ):
         super().__init__()
-        self.esm, self.esm_dict = ESM_REGISTRY[model_key]()
+        if esm_state_dict is None:
+            self.esm, self.esm_dict = ESM_REGISTRY[model_key]()
+        else:
+            num_layers, embed_dim, attention_heads = ESM2_ARCH[model_key]
+            self.esm_dict = Alphabet.from_architecture("ESM-1b")
+            self.esm = ESM2(
+                num_layers=num_layers,
+                embed_dim=embed_dim,
+                attention_heads=attention_heads,
+                alphabet=self.esm_dict,
+                token_dropout=True,
+            )
+            self.esm.load_state_dict(esm_state_dict, strict=False)
         self.register_buffer("af2_to_esm", FrozenEsmModel._af2_to_esm(self.esm_dict))
         self.use_esm_attn_map = use_esm_attn_map
         self._repr_layers = tuple(range(self.esm.num_layers + 1))

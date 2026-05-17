@@ -105,11 +105,20 @@ MuCO-ICML2026/
 ```bash
 conda env create -f environment.yml
 conda activate muco
-
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-pip install lightning omegaconf einops biopython
-pip install fair-esm
 ```
+
+`environment.yml` contains the backend runtime dependencies used by both local execution and `Dockerfile.api`, including PyTorch CUDA 11.8, FastAPI, OpenMM, PyMOL, and MuCO model dependencies.
+
+### Model Weights
+
+Pretrained MuCO checkpoints are not stored in this repository. Download the weights from the Google Drive link in `params/link.md` and place them under `params/` before running inference or the API server:
+
+```text
+params/foldflow.pth
+params/flowpacker.pth
+```
+
+The `params/` directory is ignored by Git except for `params/link.md`, so local checkpoint files will not be committed accidentally.
 
 ## Method Pipeline
 
@@ -189,6 +198,18 @@ For a standard generation workflow, run the three stages sequentially:
 3. Refine generated conformations with the relaxation module.
 
 If you maintain a project-specific inference wrapper, start from `muco_infer.py` and the scripts under `runner/`.
+
+### Docker And API Deployment
+
+Backend API deployment is documented in `API_DEPLOYMENT.md`. API job and log directories are server-managed through `JOB_ROOT` and `LOG_ROOT`; clients do not submit filesystem paths. The command-line wrapper still supports explicit local output and log directories for operator workflows:
+
+```bash
+python muco_infer.py input.json \
+    --output ./runs/cli/job-001 \
+    --log_dir ./runs/cli_logs/job-001 \
+    --K 1 \
+    --M 1
+```
 
 ## Evaluation
 

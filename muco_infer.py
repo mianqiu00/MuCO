@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import json
 import logging
 import os
@@ -261,15 +262,14 @@ def run(args):
             stage2_seconds = time.perf_counter() - stage2_start
             stage2_done += 1
             stage2_step_done += int(args.sidechain_steps)
-            _write_progress(args, "stage3" if not args.skip_relax else "finalizing", stage1_done=stage1_step_total, stage1_total=stage1_step_total, stage2_done=stage2_step_done, stage2_total=int(args.sidechain_steps) * total_sidechains, stage3_done=stage3_done, stage3_total=total_sidechains)
+            _write_progress(args, "stage3", stage1_done=stage1_step_total, stage1_total=stage1_step_total, stage2_done=stage2_step_done, stage2_total=int(args.sidechain_steps) * total_sidechains, stage3_done=stage3_done, stage3_total=total_sidechains)
             relax_info = None
             stage3_seconds = 0.0
-            if not args.skip_relax:
-                stage3_start = time.perf_counter()
-                relax_info = _relax_pdb(packed_pdb, relaxed_pdb, args.relax_platform, log=args.relax_log)
-                stage3_seconds = time.perf_counter() - stage3_start
-                stage3_done += 1
-                _write_progress(args, "stage3", stage1_done=stage1_step_total, stage1_total=stage1_step_total, stage2_done=stage2_step_done, stage2_total=int(args.sidechain_steps) * total_sidechains, stage3_done=stage3_done, stage3_total=total_sidechains)
+            stage3_start = time.perf_counter()
+            relax_info = _relax_pdb(packed_pdb, relaxed_pdb, args.relax_platform, log=args.relax_log)
+            stage3_seconds = time.perf_counter() - stage3_start
+            stage3_done += 1
+            _write_progress(args, "stage3", stage1_done=stage1_step_total, stage1_total=stage1_step_total, stage2_done=stage2_step_done, stage2_total=int(args.sidechain_steps) * total_sidechains, stage3_done=stage3_done, stage3_total=total_sidechains)
             results.append({
                 "id": sample_name,
                 "sequence": sequence,
@@ -284,7 +284,7 @@ def run(args):
                 "total_seconds": stage1_seconds_each + stage2_seconds + stage3_seconds,
                 "backbone_pdb": str(backbone_pdb),
                 "sidechain_pdb": str(packed_pdb),
-                "relaxed_pdb": None if args.skip_relax else str(relaxed_pdb),
+                "relaxed_pdb": str(relaxed_pdb),
                 "relax": relax_info,
             })
 
@@ -315,16 +315,28 @@ def main():
     parser.add_argument("--sidechain_steps", type=int, default=10)
     parser.add_argument("--sidechain_coeff", type=float, default=5.0)
     parser.add_argument("--use_gt_masks", action="store_true")
-    parser.add_argument("--skip_relax", action="store_true")
     parser.add_argument("--relax_platform", default="CUDA", choices=["CUDA", "CPU", "OpenCL"])
     parser.add_argument("--relax_log", action="store_true")
     parser.add_argument("--progress_json", default=None)
+    parser.add_argument("--log_dir", default=None, help="Directory for muco.log. If omitted, logs are written to the console.")
     parser.add_argument("--make_zip", action="store_true")
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-    summary_path = run(args)
-    print(f"MuCO inference complete. Summary: {summary_path}")
+    def execute():
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", force=True)
+        summary_path = run(args)
+        print(f"MuCO inference complete. Summary: {summary_path}")
+
+    if args.log_dir:
+        log_dir = Path(args.log_dir).expanduser().resolve()
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / "muco.log"
+        with open(log_path, "a") as log_file:
+            with contextlib.redirect_stdout(log_file), contextlib.redirect_stderr(log_file):
+                execute()
+        print(f"MuCO inference complete. Log: {log_path}")
+    else:
+        execute()
 
 
 if __name__ == "__main__":

@@ -1,0 +1,14 @@
+app/.next
+app/node_modules
+app/run.log
+app/run.pid
+runs
+outputs
+cache
+params
+torch-cache
+__pycache__
+**/__pycache__
+*.pyc
+.git
+.DS_Store
