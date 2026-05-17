@@ -96,22 +96,21 @@ MuCO-ICML2026/
 
 ### Prerequisites
 
-- Python 3.9+
-- CUDA 11.x or later for GPU acceleration
-- Conda recommended for environment management
+- Linux server or workstation with an NVIDIA GPU.
+- NVIDIA driver compatible with CUDA 11.8.
+- Docker and Docker Compose v2.
+- NVIDIA Container Toolkit for GPU access inside Docker.
+- Conda is only required if you run MuCO directly from source instead of Docker.
 
-### Environment Setup
+Check that Docker can see the GPU:
 
 ```bash
-conda env create -f environment.yml
-conda activate muco
+docker run --rm --gpus all nvidia/cuda:11.8.0-base-ubuntu22.04 nvidia-smi
 ```
-
-`environment.yml` contains the backend runtime dependencies used by both local execution and `Dockerfile.api`, including PyTorch CUDA 11.8, FastAPI, OpenMM, PyMOL, and MuCO model dependencies.
 
 ### Model Weights
 
-Pretrained MuCO checkpoints are not stored in this repository. Download the weights from the Google Drive link in `params/link.md` and place them under `params/` before running inference or the API server:
+Pretrained MuCO checkpoints are not stored in this repository. Download the weights from the Google Drive link in `params/link.md` and place them under `params/` before running inference, the API server, or the web demo:
 
 ```text
 params/foldflow.pth
@@ -119,6 +118,104 @@ params/flowpacker.pth
 ```
 
 The `params/` directory is ignored by Git except for `params/link.md`, so local checkpoint files will not be committed accidentally.
+
+### Docker Web Demo
+
+The recommended way to run MuCO is the Docker Compose web stack. It starts both services:
+
+- `muco-api`: FastAPI backend on port `8000`, using GPU through `Dockerfile.api`.
+- `web`: Next.js frontend on port `3000`, using `app/Dockerfile.web`.
+
+From the repository root:
+
+```bash
+docker compose build
+docker compose up -d
+```
+
+Open the web interface:
+
+```text
+http://localhost:3000
+```
+
+If running on a remote server, replace `localhost` with the server IP:
+
+```text
+http://SERVER_IP:3000
+```
+
+The frontend talks to the backend through the Compose service URL:
+
+```text
+MUCO_API_URL=http://muco-api:8000
+```
+
+This is already configured in `docker-compose.yml`. You normally do not need to change it unless the frontend and API are deployed separately.
+
+Useful commands:
+
+```bash
+docker compose ps
+docker compose logs -f
+docker compose logs -f muco-api
+docker compose logs -f web
+docker compose down
+```
+
+Generated jobs and logs are stored on the host under:
+
+```text
+runs/jobs/
+runs/logs/
+```
+
+These runtime outputs are ignored by Git.
+
+### Backend-Only Docker API
+
+If you only need the inference API without the web interface:
+
+```bash
+docker compose -f docker-compose.api.yml build
+docker compose -f docker-compose.api.yml up -d
+```
+
+Health checks:
+
+```bash
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/ready
+curl http://127.0.0.1:8000/resources
+```
+
+Submit a small smoke-test job:
+
+```bash
+curl -X POST http://127.0.0.1:8000/jobs \
+  -H 'content-type: application/json' \
+  -d '{
+    "sequence": "ACDEFGHIK",
+    "K": 1,
+    "M": 1,
+    "backbone_steps": 10,
+    "sidechain_steps": 3,
+    "make_zip": false
+  }'
+```
+
+See `API_DEPLOYMENT.md` for the full backend deployment handoff.
+
+### Local Source Environment
+
+For development or non-Docker execution, create the Conda environment:
+
+```bash
+conda env create -f environment.yml
+conda activate muco
+```
+
+`environment.yml` contains the backend runtime dependencies used by both local execution and `Dockerfile.api`, including PyTorch CUDA 11.8, FastAPI, OpenMM, PyMOL, and MuCO model dependencies.
 
 ## Method Pipeline
 
